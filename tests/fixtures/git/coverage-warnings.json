@@ -1,0 +1,9 @@
+{
+  "name": "coverage-warnings",
+  "purpose": "Unsupported route conventions and malformed manifests remain explicit",
+  "inputs": {
+    "route": "src/app/@modal/(.)photo/[id]/page.tsx",
+    "manifest": "{ invalid json"
+  },
+  "expectedWarnings": ["UNSUPPORTED_INTERCEPTING_ROUTE", "MALFORMED_MANIFEST"]
+}

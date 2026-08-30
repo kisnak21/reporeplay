@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>RepoReplay Developer Console Prototype</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap');
+
+    :root {
+      --void: #0d1113;
+      --panel: #13191c;
+      --panel-raised: #192125;
+      --line: #405057;
+      --line-soft: #29353a;
+      --text: #edf2ef;
+      --muted: #a5b2b1;
+      --amber: #f2a93b;
+      --amber-dark: #a96200;
+      --cyan: #63c6d1;
+      --green: #79c987;
+      --red: #ff8070;
+      --focus: #8bc8ff;
+      --sans: "Manrope", Arial, sans-serif;
+      --mono: "IBM Plex Mono", Consolas, monospace;
+      --max: 92rem;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--void); color: var(--text); font-family: var(--sans); line-height: 1.55; }
+    button, input, select { font: inherit; }
+    button, input, select, a { min-height: 44px; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    code, .mono { font-family: var(--mono); }
+    code { overflow-wrap: anywhere; }
+    a { color: inherit; text-underline-offset: .2em; }
+
+    .skip { position: fixed; z-index: 100; top: .75rem; left: .75rem; padding: .7rem 1rem; background: var(--text); color: var(--void); transform: translateY(-180%); }
+    .skip:focus { transform: none; }
+
+    .topbar { border-bottom: 1px solid var(--line); background: var(--panel); }
+    .topbar-inner, .tabs-inner, .shell { width: min(calc(100% - 2rem), var(--max)); margin: auto; }
+    .topbar-inner { min-height: 4rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .brand { display: flex; align-items: center; gap: .7rem; min-height: auto; text-decoration: none; font-family: var(--mono); font-weight: 600; }
+    .prompt { color: var(--amber); }
+    .system { color: var(--muted); font: .75rem var(--mono); }
+    .topnav { display: flex; gap: 1rem; }
+    .topnav a { min-height: auto; color: var(--muted); font-size: .85rem; font-weight: 600; }
+
+    .tabs { position: sticky; z-index: 20; top: 0; border-bottom: 1px solid var(--line); background: rgba(13,17,19,.97); }
+    .tabs-inner { display: flex; gap: .4rem; padding: .55rem 0; overflow-x: auto; }
+    .tab, .button, .icon-button { min-width: max-content; border: 1px solid var(--line); border-radius: 3px; background: var(--panel); color: var(--text); cursor: pointer; font-weight: 700; }
+    .tab { padding: .5rem .85rem; font: .76rem var(--mono); }
+    .tab[aria-pressed="true"] { border-color: var(--amber); background: var(--amber); color: #171006; }
+    .tab:hover, .button:hover { border-color: var(--amber); }
+
+    .shell { padding: clamp(2rem, 5vw, 5rem) 0; }
+    .screen[hidden] { display: none; }
+    .eyebrow { margin: 0 0 .85rem; color: var(--cyan); font: .75rem var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+    h1, h2, h3 { margin: 0; line-height: 1.08; }
+    h1 { max-width: 14ch; font-size: clamp(2.8rem, 7vw, 6.8rem); letter-spacing: -.055em; }
+    h2 { font-size: clamp(2rem, 4vw, 4rem); letter-spacing: -.04em; }
+    h3 { font-size: 1.1rem; }
+    .lede { max-width: 44rem; margin: 1.3rem 0 0; color: var(--muted); font-size: clamp(1.1rem, 2vw, 1.35rem); }
+
+    .hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(19rem, .7fr); gap: clamp(2rem, 6vw, 6rem); align-items: end; }
+    .terminal { border: 1px solid var(--line); background: var(--panel); box-shadow: 8px 8px 0 #080b0c; }
+    .terminal-head { display: flex; justify-content: space-between; padding: .65rem .8rem; border-bottom: 1px solid var(--line); color: var(--muted); font: .72rem var(--mono); }
+    .terminal-body { padding: 1.2rem; font: .82rem/1.75 var(--mono); }
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .dim { color: var(--muted); }
+
+    .command-form { margin-top: clamp(2.5rem, 5vw, 4.5rem); padding: 1rem; border: 1px solid var(--line); background: var(--panel); }
+    .command-label { display: block; margin-bottom: .55rem; color: var(--muted); font: .75rem var(--mono); }
+    .command-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .65rem; }
+    .command-mark { color: var(--amber); font: 600 1.15rem var(--mono); }
+    input, select { width: 100%; border: 1px solid var(--line); border-radius: 2px; background: #0a0e10; color: var(--text); padding: .8rem .9rem; }
+    input::placeholder { color: #899594; opacity: 1; }
+    .button { padding: .75rem 1rem; }
+    .primary { border-color: var(--amber-dark); background: var(--amber); color: #171006; }
+    .caption { color: var(--muted); font-size: .86rem; }
+
+    .screen-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(17rem, .4fr); gap: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); }
+    .screen-head p:last-child { margin: 0; color: var(--muted); }
+    .data-grid { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 1.5rem; border: 1px solid var(--line); }
+    .datum { min-width: 0; padding: 1rem; border-right: 1px solid var(--line); background: var(--panel); }
+    .datum:last-child { border-right: 0; }
+    .datum-label { color: var(--muted); font: .7rem var(--mono); text-transform: uppercase; }
+    .datum-value { margin-top: .35rem; font: 600 1.25rem var(--mono); overflow-wrap: anywhere; }
+
+    .alert { margin-top: 1.25rem; padding: 1rem; border: 1px solid var(--amber-dark); background: #251b0d; }
+    .alert strong { color: #ffc66d; }
+    .alert p { margin: .3rem 0 0; color: #e6d7bf; }
+
+    fieldset { margin: 2rem 0 0; padding: 0; border: 0; }
+    legend { margin-bottom: .6rem; color: var(--cyan); font: .75rem var(--mono); text-transform: uppercase; }
+    .root { display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center; padding: 1rem; border: 1px solid var(--line); border-bottom: 0; background: var(--panel); cursor: pointer; }
+    .root:last-of-type { border-bottom: 1px solid var(--line); }
+    .root input { width: 1.2rem; min-height: auto; accent-color: var(--amber); }
+    .root small { color: var(--muted); font-family: var(--mono); }
+    .root-status { color: var(--green); font: .72rem var(--mono); }
+
+    .process { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 2rem; margin-top: 2rem; }
+    .log { border: 1px solid var(--line); background: #090d0f; }
+    .log-row { display: grid; grid-template-columns: 6rem minmax(0, 1fr) auto; gap: 1rem; padding: .85rem 1rem; border-bottom: 1px solid var(--line-soft); font: .79rem var(--mono); }
+    .log-row:last-child { border-bottom: 0; }
+    .log-time { color: var(--muted); }
+    .log-state { text-align: right; }
+    .current { background: #1d1a12; }
+    .meter { height: .55rem; margin-top: 1rem; border: 1px solid var(--line); background: #080b0c; }
+    .meter span { display: block; width: 39%; height: 100%; background: var(--amber); }
+
+    .repo-head { display: flex; justify-content: space-between; align-items: end; gap: 2rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); }
+    .repo-name { overflow-wrap: anywhere; }
+    .repo-meta { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .8rem; color: var(--muted); font: .75rem var(--mono); }
+    .snapshot { text-align: right; font: .72rem/1.7 var(--mono); color: var(--muted); }
+
+    .workspace { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 1rem; margin-top: 1.5rem; }
+    .filters { align-self: start; position: sticky; top: 4.5rem; padding: 1rem; border: 1px solid var(--line); background: var(--panel); }
+    .filter { margin-top: .9rem; }
+    .filter label { display: block; margin-bottom: .3rem; color: var(--muted); font: .7rem var(--mono); }
+
+    .commits { border: 1px solid var(--line); background: var(--panel); }
+    .commit { display: grid; grid-template-columns: 7rem minmax(0, 1fr) 7rem; gap: 1rem; padding: 1.1rem; border-bottom: 1px solid var(--line); }
+    .commit:last-child { border-bottom: 0; }
+    .commit-sha, .commit-stats { color: var(--muted); font: .72rem/1.6 var(--mono); }
+    .commit-stats { text-align: right; }
+    .commit-title button { padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: 600 1rem var(--mono); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: .25em; }
+    .tag { display: inline-block; margin-top: .55rem; color: var(--cyan); font: .68rem var(--mono); text-transform: uppercase; }
+    .events { margin: .7rem 0 0; padding: 0; list-style: none; font: .78rem/1.7 var(--mono); }
+    .add { color: var(--green); }
+    .remove { color: var(--red); }
+    .update { color: var(--amber); }
+    details { margin-top: .5rem; }
+    summary { width: fit-content; min-height: 44px; display: flex; align-items: center; color: var(--muted); cursor: pointer; font: .75rem var(--mono); }
+    .file-list { margin: 0; padding: .6rem 0 0; border-top: 1px solid var(--line-soft); list-style: none; color: var(--muted); font: .72rem/1.8 var(--mono); }
+
+    .backdrop { position: fixed; z-index: 40; inset: 0; display: grid; justify-items: end; background: rgba(0,0,0,.7); }
+    .backdrop[hidden] { display: none; }
+    .drawer { width: min(48rem, 100%); height: 100%; overflow-y: auto; padding: clamp(1rem, 3vw, 2rem); border-left: 1px solid var(--amber); background: var(--panel); box-shadow: -20px 0 50px #000; }
+    .drawer-head { display: flex; justify-content: space-between; align-items: start; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+    .icon-button { width: 44px; padding: 0; font: 1rem var(--mono); }
+    .evidence { padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
+    .evidence h3 { margin-bottom: .7rem; color: var(--cyan); font: .75rem var(--mono); text-transform: uppercase; }
+    table { width: 100%; border-collapse: collapse; font: .75rem var(--mono); }
+    th, td { padding: .65rem .4rem; border-top: 1px solid var(--line-soft); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+    th { color: var(--muted); }
+
+    @media (max-width: 800px) {
+      .hero, .screen-head, .process, .workspace { grid-template-columns: 1fr; }
+      .data-grid { grid-template-columns: 1fr 1fr; }
+      .datum:nth-child(2) { border-right: 0; }
+      .datum:nth-child(n+3) { border-top: 1px solid var(--line); }
+      .filters { position: static; }
+      .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+      .filter { margin: 0; }
+      .repo-head { align-items: start; flex-direction: column; }
+      .snapshot { text-align: left; }
+    }
+
+    @media (max-width: 560px) {
+      .topbar-inner, .tabs-inner, .shell { width: min(calc(100% - 1rem), var(--max)); }
+      .system, .topnav a:first-child { display: none; }
+      .command-row { grid-template-columns: auto minmax(0, 1fr); }
+      .command-row .button { grid-column: 1 / -1; width: 100%; }
+      .data-grid { grid-template-columns: 1fr; }
+      .datum, .datum:nth-child(2) { border-right: 0; border-top: 1px solid var(--line); }
+      .datum:first-child { border-top: 0; }
+      .root { grid-template-columns: auto 1fr; }
+      .root-status { grid-column: 2; }
+      .log-row { grid-template-columns: 1fr; gap: .2rem; }
+      .log-state { text-align: left; }
+      .filter-grid { grid-template-columns: 1fr; }
+      .commit { grid-template-columns: 1fr; gap: .45rem; }
+      .commit-stats { text-align: left; }
+      .drawer { border-left: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to prototype</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#" data-link="import"><span class="prompt">&gt;_</span><span>reporeplay</span></a>
+      <span class="system">source: github / mode: first-parent</span>
+      <nav class="topnav" aria-label="Primary"><a href="#" data-link="repository">Showcase</a><a href="#design-note">Design note</a></nav>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Prototype screens">
+    <div class="tabs-inner">
+      <button class="tab" type="button" data-view="import" aria-pressed="true">01 / import</button>
+      <button class="tab" type="button" data-view="preflight" aria-pressed="false">02 / preflight</button>
+      <button class="tab" type="button" data-view="processing" aria-pressed="false">03 / processing</button>
+      <button class="tab" type="button" data-view="repository" aria-pressed="false">04 / repository</button>
+    </div>
+  </nav>
+
+  <main id="main">
+    <section class="screen shell" data-screen="import">
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Repository evolution console</p>
+          <h1>Trace mainline change to source.</h1>
+          <p class="lede">Inspect complete first-parent history for a public Next.js application. Every route and dependency transition resolves to commit and file evidence.</p>
+        </div>
+        <div class="terminal" aria-label="Supported analysis summary">
+          <div class="terminal-head"><span>capabilities</span><span>ready</span></div>
+          <div class="terminal-body">
+            <div><span class="ok">ok</span> public GitHub source</div>
+            <div><span class="ok">ok</span> App and Pages Router</div>
+            <div><span class="ok">ok</span> package.json declarations</div>
+            <div><span class="ok">ok</span> complete first-parent chain</div>
+            <div><span class="warn">limit</span> 500 commits / 25,000 files</div>
+          </div>
+        </div>
+      </div>
+
+      <form class="command-form" id="import-form">
+        <label class="command-label" for="repo-url">repository_url</label>
+        <div class="command-row">
+          <span class="command-mark" aria-hidden="true">$</span>
+          <input id="repo-url" type="url" value="https://github.com/acme/ledger" required aria-describedby="import-note">
+          <button class="button primary" type="submit">Run preflight</button>
+        </div>
+        <p class="caption" id="import-note">No processing begins until support and completeness checks pass.</p>
+      </form>
+      <p class="caption mono" id="design-note">Design read: an operational console for repository evidence. ENERGY 2 / RHYTHM 1 / MOTION 1.</p>
+    </section>
+
+    <section class="screen shell" data-screen="preflight" hidden>
+      <header class="screen-head">
+        <div><p class="eyebrow">preflight / source validated</p><h2>Select one application root.</h2></div>
+        <p>Two supported Next.js applications were found. The processor needs an explicit target before it can freeze the history scope.</p>
+      </header>
+
+      <div class="data-grid" aria-label="Preflight facts">
+        <div class="datum"><div class="datum-label">repository</div><div class="datum-value">acme/ledger</div></div>
+        <div class="datum"><div class="datum-label">target</div><div class="datum-value">main@9d8e7f6</div></div>
+        <div class="datum"><div class="datum-label">first-parent commits</div><div class="datum-value">184 / 500</div></div>
+        <div class="datum"><div class="datum-label">head files</div><div class="datum-value">3,210 / 25k</div></div>
+      </div>
+      <div class="alert"><strong>Completeness check passed.</strong><p>The entire first-parent chain is within current limits. RepoReplay will not create a partial import.</p></div>
+
+      <form id="root-form">
+        <fieldset>
+          <legend>app_root candidates</legend>
+          <label class="root"><input type="radio" name="root" checked><span><code>apps/storefront</code><br><small>package.json · src/app · 14 route files</small></span><span class="root-status">supported</span></label>
+          <label class="root"><input type="radio" name="root"><span><code>apps/admin</code><br><small>package.json · pages · 9 route files</small></span><span class="root-status">supported</span></label>
+        </fieldset>
+        <button class="button primary" type="submit" style="margin-top:1rem">Queue selected root</button>
+      </form>
+    </section>
+
+    <section class="screen shell" data-screen="processing" hidden>
+      <header class="screen-head">
+        <div><p class="eyebrow">run a18c / lease active</p><h2>Processing durable evidence.</h2></div>
+        <p class="mono">acme/ledger<br>main@9d8e7f6<br>apps/storefront</p>
+      </header>
+
+      <div class="process">
+        <div>
+          <div class="log" aria-label="Processing log">
+            <div class="log-row"><span class="log-time">09:41:02</span><span>discover first-parent history</span><span class="log-state ok">complete</span></div>
+            <div class="log-row current"><span class="log-time">09:41:08</span><span>fetch commit evidence</span><span class="log-state warn">72 / 184</span></div>
+            <div class="log-row"><span class="log-time">waiting</span><span>classify commit messages</span><span class="log-state dim">queued</span></div>
+            <div class="log-row"><span class="log-time">waiting</span><span>detect dependency transitions</span><span class="log-state dim">queued</span></div>
+            <div class="log-row"><span class="log-time">waiting</span><span>detect route transitions</span><span class="log-state dim">queued</span></div>
+            <div class="log-row"><span class="log-time">waiting</span><span>validate and activate snapshot</span><span class="log-state dim">queued</span></div>
+          </div>
+          <div class="meter" aria-label="72 of 184 commits processed"><span></span></div>
+          <p class="caption mono" role="status" aria-live="polite">checkpoint persisted / worker lease renews every 15 seconds</p>
+        </div>
+        <aside>
+          <div class="terminal">
+            <div class="terminal-head"><span>worker</span><span class="ok">healthy</span></div>
+            <div class="terminal-body"><div>lease <span class="ok">owned</span></div><div>attempt <span class="dim">1 / 4</span></div><div>github quota <span class="ok">sufficient</span></div><div>previous snapshot <span class="dim">none</span></div></div>
+          </div>
+          <button class="button" id="finish" type="button" style="margin-top:1rem;width:100%">Preview completed run</button>
+        </aside>
+      </div>
+    </section>
+
+    <section class="screen shell" data-screen="repository" hidden>
+      <header class="repo-head">
+        <div><p class="eyebrow">active snapshot</p><h2 class="repo-name">acme/ledger</h2><div class="repo-meta"><span>branch main</span><span>root apps/storefront</span><span>184 commits</span><span>detectors v1</span></div></div>
+        <div class="snapshot">root 1a2b3c4<br>head 9d8e7f6<br>activated 2026-08-31 09:46 UTC</div>
+      </header>
+
+      <div class="data-grid" aria-label="Repository summary">
+        <div class="datum"><div class="datum-label">history</div><div class="datum-value">184 complete</div></div>
+        <div class="datum"><div class="datum-label">routes at head</div><div class="datum-value">14</div></div>
+        <div class="datum"><div class="datum-label">declared dependencies</div><div class="datum-value">37</div></div>
+        <div class="datum"><div class="datum-label">coverage warnings</div><div class="datum-value warn">1 review</div></div>
+      </div>
+      <div class="alert"><strong>Route coverage warning.</strong><p><code>src/app/@modal/(.)photo/[id]/page.tsx</code> uses parallel and intercepting routes. File evidence remains available; no public route transition is asserted.</p></div>
+
+      <div class="workspace">
+        <aside class="filters" aria-label="Timeline filters">
+          <h3 class="mono">filter_record</h3>
+          <div class="filter-grid">
+            <div class="filter"><label for="query">keyword</label><input id="query" type="search" placeholder="authentication"></div>
+            <div class="filter"><label for="event">evidence</label><select id="event"><option>all</option><option>route</option><option>dependency</option></select></div>
+            <div class="filter"><label for="category">category</label><select id="category"><option>all</option><option>feature</option><option>fix</option><option>uncategorized</option></select></div>
+            <div class="filter"><label for="path">path</label><input id="path" type="text" placeholder="src/app"></div>
+          </div>
+        </aside>
+
+        <section aria-labelledby="timeline-title">
+          <p class="eyebrow">timeline / newest first</p>
+          <h3 id="timeline-title" style="margin-bottom:.75rem">Observable transitions</h3>
+          <div class="commits">
+            <article class="commit">
+              <div class="commit-sha">9d8e7f6<br>31 Aug 2026</div>
+              <div><div class="commit-title"><button class="open-drawer" type="button">feat: add account page</button></div><span class="tag">feature</span><ul class="events"><li><span class="add">+ route</span> /account</li><li><span class="update">~ dependency</span> next 15.4.0 → 15.5.0</li></ul><details><summary>show 4 changed files</summary><ul class="file-list"><li>+ apps/storefront/src/app/account/page.tsx</li><li>~ apps/storefront/package.json</li><li>~ apps/storefront/src/components/nav.tsx</li><li>~ pnpm-lock.yaml</li></ul></details></div>
+              <div class="commit-stats">4 files<br><span class="add">+90</span> <span class="remove">-12</span></div>
+            </article>
+            <article class="commit">
+              <div class="commit-sha">5c7a103<br>18 Aug 2026</div>
+              <div><div class="commit-title"><button class="open-drawer" type="button">remove retired billing route</button></div><span class="tag">uncategorized</span><ul class="events"><li><span class="remove">- route</span> /billing/legacy</li></ul></div>
+              <div class="commit-stats">3 files<br><span class="add">+8</span> <span class="remove">-147</span></div>
+            </article>
+            <article class="commit">
+              <div class="commit-sha">8f103bc<br>02 Aug 2026</div>
+              <div><div class="commit-title"><button class="open-drawer" type="button">build: replace date utility</button></div><span class="tag">build</span><ul class="events"><li><span class="add">+ dependency</span> date-fns 4.1.0</li><li><span class="remove">- dependency</span> dayjs 1.11.13</li></ul></div>
+              <div class="commit-stats">2 files<br><span class="add">+11</span> <span class="remove">-9</span></div>
+            </article>
+          </div>
+          <button class="button" id="load" type="button" style="margin-top:1rem">Load older commits</button>
+          <p class="caption mono" id="load-status" role="status" aria-live="polite"></p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div class="backdrop" id="backdrop" hidden>
+    <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
+      <header class="drawer-head"><div><p class="eyebrow">commit / 9d8e7f6</p><h2 id="drawer-title" style="font-size:clamp(1.7rem,4vw,3rem)">feat: add account page</h2></div><button class="icon-button" id="close" type="button" aria-label="Close commit evidence">esc</button></header>
+      <section class="evidence"><h3>commit_record</h3><table><tbody><tr><th>author</th><td>Alex Morgan</td></tr><tr><th>committed</th><td>2026-08-31 09:42 UTC</td></tr><tr><th>first parent</th><td><code>30cd8fe</code></td></tr><tr><th>category</th><td>feature / conventional commit</td></tr></tbody></table></section>
+      <section class="evidence"><h3>route_evidence</h3><table><thead><tr><th>change</th><th>route</th><th>source</th></tr></thead><tbody><tr><td class="add">added</td><td><code>/account</code></td><td><code>src/app/account/page.tsx</code></td></tr></tbody></table></section>
+      <section class="evidence"><h3>dependency_evidence</h3><table><thead><tr><th>package</th><th>declaration</th><th>manifest</th></tr></thead><tbody><tr><td><code>next</code></td><td>15.4.0 → 15.5.0</td><td><code>apps/storefront/package.json</code></td></tr></tbody></table></section>
+      <section class="evidence"><h3>changed_files</h3><ul class="file-list"><li>+90 -0 apps/storefront/src/app/account/page.tsx</li><li>+1 -1 apps/storefront/package.json</li><li>+8 -6 apps/storefront/src/components/nav.tsx</li><li>+42 -31 pnpm-lock.yaml</li></ul></section>
+      <a class="button" href="https://github.com/" style="display:inline-flex;align-items:center;text-decoration:none;margin-top:1rem">Open commit on GitHub</a>
+    </aside>
+  </div>
+
+  <script>
+    const screens = [...document.querySelectorAll('[data-screen]')];
+    const tabs = [...document.querySelectorAll('[data-view]')];
+    const backdrop = document.querySelector('#backdrop');
+    const drawer = document.querySelector('#drawer');
+    let trigger = null;
+
+    function showView(name) {
+      screens.forEach((screen) => { screen.hidden = screen.dataset.screen !== name; });
+      tabs.forEach((tab) => tab.setAttribute('aria-pressed', String(tab.dataset.view === name)));
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+
+    tabs.forEach((tab) => tab.addEventListener('click', () => showView(tab.dataset.view)));
+    document.querySelectorAll('[data-link]').forEach((link) => link.addEventListener('click', (event) => { event.preventDefault(); showView(link.dataset.link); }));
+    document.querySelector('#import-form').addEventListener('submit', (event) => { event.preventDefault(); showView('preflight'); });
+    document.querySelector('#root-form').addEventListener('submit', (event) => { event.preventDefault(); showView('processing'); });
+    document.querySelector('#finish').addEventListener('click', () => showView('repository'));
+    document.querySelector('#load').addEventListener('click', (event) => { event.currentTarget.disabled = true; document.querySelector('#load-status').textContent = 'Prototype boundary reached. Production will request the next cursor page.'; });
+
+    function focusable() { return [...drawer.querySelectorAll('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])')]; }
+    function openDrawer(button) { trigger = button; backdrop.hidden = false; document.body.style.overflow = 'hidden'; drawer.focus(); }
+    function closeDrawer() { backdrop.hidden = true; document.body.style.overflow = ''; trigger?.focus(); }
+
+    document.querySelectorAll('.open-drawer').forEach((button) => button.addEventListener('click', () => openDrawer(button)));
+    document.querySelector('#close').addEventListener('click', closeDrawer);
+    backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) closeDrawer(); });
+    document.addEventListener('keydown', (event) => {
+      if (backdrop.hidden) return;
+      if (event.key === 'Escape') closeDrawer();
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items.at(-1).focus(); }
+      if (!event.shiftKey && document.activeElement === items.at(-1)) { event.preventDefault(); items[0].focus(); }
+    });
+  </script>
+</body>
+</html>

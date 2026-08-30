@@ -1,0 +1,13 @@
+{
+  "name": "linear-app-router",
+  "purpose": "Root commit followed by a linear App Router route and dependency change",
+  "commits": [
+    { "id": "root", "firstParent": null, "message": "chore: initialize application" },
+    { "id": "account", "firstParent": "root", "message": "feat: add account page" }
+  ],
+  "expected": {
+    "sequence": ["root", "account"],
+    "routes": [{ "commit": "account", "type": "ADDED", "route": "/account" }],
+    "dependencies": [{ "commit": "account", "type": "UPDATED", "package": "next", "from": "15.4.0", "to": "15.5.0" }]
+  }
+}

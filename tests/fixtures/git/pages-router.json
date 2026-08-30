@@ -1,0 +1,9 @@
+{
+  "name": "pages-router",
+  "purpose": "Pages Router route additions and removals",
+  "routes": [
+    { "commit": "root", "type": "ADDED", "route": "/" },
+    { "commit": "api", "type": "ADDED", "route": "/api/users" },
+    { "commit": "retire", "type": "REMOVED", "route": "/legacy" }
+  ]
+}

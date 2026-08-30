@@ -1,0 +1,17 @@
+{
+  "preflight": {
+    "request": { "url": "https://github.com/acme/ledger" },
+    "success": { "status": 200, "required": ["repository", "firstParentCommitCount", "headFileCount", "appRootCandidates", "limits"] },
+    "errors": ["INVALID_REPOSITORY_URL", "REPOSITORY_NOT_FOUND", "UNSUPPORTED_REPOSITORY", "REPOSITORY_LIMIT_EXCEEDED"]
+  },
+  "timeline": {
+    "query": { "cursor": "opaque", "limit": 30, "event": "ROUTE" },
+    "success": { "status": 200, "required": ["snapshot", "items", "pageInfo"] },
+    "errors": ["CURSOR_INVALID", "CURSOR_SNAPSHOT_MISMATCH"]
+  },
+  "refresh": {
+    "request": {},
+    "success": { "status": 202, "required": ["repositoryId", "run"] },
+    "errors": ["RUN_ALREADY_ACTIVE", "REPOSITORY_LIMIT_EXCEEDED"]
+  }
+}

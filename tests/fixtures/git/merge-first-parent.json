@@ -1,0 +1,14 @@
+{
+  "name": "merge-first-parent",
+  "purpose": "Merge commit is compared only with its first parent",
+  "commits": [
+    { "id": "root", "parents": [] },
+    { "id": "main", "parents": ["root"] },
+    { "id": "feature", "parents": ["root"] },
+    { "id": "merge", "parents": ["main", "feature"] }
+  ],
+  "expected": {
+    "sequence": ["root", "main", "merge"],
+    "mergeDiffBase": "main"
+  }
+}

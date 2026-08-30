@@ -1,0 +1,9 @@
+{
+  "name": "router-migration",
+  "purpose": "App Router and Pages Router can coexist during migration",
+  "roots": ["src/app", "src/pages"],
+  "expected": {
+    "routerTypes": ["APP", "PAGES"],
+    "routeEvents": ["ADDED", "REMOVED"]
+  }
+}

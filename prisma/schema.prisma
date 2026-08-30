@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RepositoryAvailability {
+  CONFIGURATION_REQUIRED
+  PROCESSING
+  READY
+}
+
+enum ProcessingRunStatus {
+  NEEDS_CONFIGURATION
+  QUEUED
+  RUNNING
+  WAITING_RATE_LIMIT
+  RETRYABLE
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum ProcessingRunKind {
+  IMPORT
+  REFRESH
+  REPROCESS
+}
+
+enum ProcessingStep {
+  DISCOVER_HISTORY
+  FETCH_COMMITS
+  CLASSIFY_COMMITS
+  DETECT_DEPENDENCIES
+  DETECT_ROUTES
+  VALIDATE_RUN
+  ACTIVATE_RUN
+  COMPLETE
+}
+
+model Repository {
+  id              String                 @id @default(uuid()) @db.Uuid
+  provider        String
+  externalId      String
+  owner           String
+  name            String
+  fullName        String
+  canonicalUrl    String
+  defaultBranch   String
+  selectedAppRoot String?
+  availability    RepositoryAvailability @default(PROCESSING)
+  activeRunId     String?                @unique @db.Uuid
+  previousRunId   String?                @unique @db.Uuid
+  createdAt       DateTime               @default(now()) @db.Timestamptz
+  updatedAt       DateTime               @updatedAt @db.Timestamptz
+  deletedAt       DateTime?              @db.Timestamptz
+  runs            ProcessingRun[]        @relation("RepositoryRuns")
+  activeRun       ProcessingRun?         @relation("ActiveRun", fields: [activeRunId], references: [id], onDelete: SetNull)
+  previousRun     ProcessingRun?         @relation("PreviousRun", fields: [previousRunId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, externalId])
+  @@unique([provider, owner, name])
+  @@index([availability])
+}
+
+model ProcessingRun {
+  id                        String              @id @default(uuid()) @db.Uuid
+  repositoryId              String              @db.Uuid
+  kind                      ProcessingRunKind
+  status                    ProcessingRunStatus
+  selectedAppRoot           String?
+  defaultBranch             String
+  rootSha                   String?
+  headSha                   String
+  expectedCommitCount       Int?
+  headFileCount             Int
+  maxCommitLimit            Int
+  maxHeadFileLimit          Int
+  schemaVersion             String
+  classifierVersion         String
+  dependencyDetectorVersion String
+  routeDetectorVersion      String
+  currentStep               ProcessingStep
+  processedCommitCount      Int                 @default(0)
+  requestedAt               DateTime            @default(now()) @db.Timestamptz
+  startedAt                 DateTime?           @db.Timestamptz
+  completedAt               DateTime?           @db.Timestamptz
+  activatedAt               DateTime?           @db.Timestamptz
+  errorCode                 String?
+  errorMessage              String?
+  repository                Repository          @relation("RepositoryRuns", fields: [repositoryId], references: [id], onDelete: Cascade)
+  activeFor                 Repository?         @relation("ActiveRun")
+  previousFor               Repository?         @relation("PreviousRun")
+  job                       ProcessingJob?
+
+  @@index([repositoryId, requestedAt(sort: Desc)])
+  @@index([repositoryId, status])
+}
+
+model ProcessingJob {
+  id                String              @id @default(uuid()) @db.Uuid
+  runId             String              @unique @db.Uuid
+  status            ProcessingRunStatus
+  priority          Int                 @default(0)
+  attemptCount      Int                 @default(0)
+  maxAttempts       Int                 @default(4)
+  nextAttemptAt     DateTime            @default(now()) @db.Timestamptz
+  leaseOwner        String?
+  leaseExpiresAt    DateTime?           @db.Timestamptz
+  heartbeatAt       DateTime?           @db.Timestamptz
+  cancelRequestedAt DateTime?           @db.Timestamptz
+  lastErrorCode     String?
+  lastErrorMessage  String?
+  createdAt         DateTime            @default(now()) @db.Timestamptz
+  updatedAt         DateTime            @updatedAt @db.Timestamptz
+  run               ProcessingRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt, priority])
+  @@index([leaseExpiresAt])
+}

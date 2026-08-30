@@ -1,0 +1,9 @@
+{
+  "name": "ambiguous-monorepo",
+  "purpose": "Multiple supported Next.js app roots require explicit selection",
+  "candidates": [
+    { "path": "apps/storefront", "manifest": "apps/storefront/package.json", "routeRoots": ["src/app"] },
+    { "path": "apps/admin", "manifest": "apps/admin/package.json", "routeRoots": ["pages"] }
+  ],
+  "expectedStatus": "NEEDS_CONFIGURATION"
+}
