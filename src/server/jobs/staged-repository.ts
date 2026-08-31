@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { RepoReplayError } from "@/server/github/errors";
 
 export interface CheckpointInput {
   jobId: string;
@@ -26,6 +27,7 @@ export interface CommitInput {
   deletions: number;
   changedFileCount: number;
   externalUrl: string;
+  files: Array<{ id: string; path: string; previousPath: string | null; status: "ADDED" | "MODIFIED" | "REMOVED" | "RENAMED"; additions: number; deletions: number; changes: number }>;
 }
 
 export async function checkpointRun(client: PoolClient, input: CheckpointInput): Promise<boolean> {
@@ -37,7 +39,26 @@ export async function writeCommitBatch(client: PoolClient, job: CheckpointInput,
   const lease = await assertLease(client, job);
   if (!lease) return false;
   for (const commit of commits) {
-    await client.query(`INSERT INTO "RunCommit"("id","runId","sha","shortSha","firstParentSha","treeSha","sequence","message","authorName","authoredAt","committedAt","additions","deletions","changedFileCount","externalUrl") VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT("runId","sha") DO UPDATE SET "shortSha"=EXCLUDED."shortSha","message"=EXCLUDED."message","authorName"=EXCLUDED."authorName","authoredAt"=EXCLUDED."authoredAt","committedAt"=EXCLUDED."committedAt","additions"=EXCLUDED."additions","deletions"=EXCLUDED."deletions","changedFileCount"=EXCLUDED."changedFileCount","externalUrl"=EXCLUDED."externalUrl" WHERE "RunCommit"."treeSha"=EXCLUDED."treeSha" AND "RunCommit"."firstParentSha" IS NOT DISTINCT FROM EXCLUDED."firstParentSha" AND "RunCommit"."sequence"=EXCLUDED."sequence"`, [commit.id, commit.runId, commit.sha, commit.shortSha, commit.firstParentSha, commit.treeSha, commit.sequence, commit.message, commit.authorName, commit.authoredAt, commit.committedAt, commit.additions, commit.deletions, commit.changedFileCount, commit.externalUrl]);
+    const commitResult = await client.query<{ id: string }>(
+      `INSERT INTO "RunCommit"("id","runId","sha","shortSha","firstParentSha","treeSha","sequence","message","authorName","authoredAt","committedAt","additions","deletions","changedFileCount","externalUrl")
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT("runId","sha") DO UPDATE SET "shortSha"=EXCLUDED."shortSha","message"=EXCLUDED."message","authorName"=EXCLUDED."authorName","authoredAt"=EXCLUDED."authoredAt","committedAt"=EXCLUDED."committedAt","additions"=EXCLUDED."additions","deletions"=EXCLUDED."deletions","changedFileCount"=EXCLUDED."changedFileCount","externalUrl"=EXCLUDED."externalUrl"
+       WHERE "RunCommit"."treeSha"=EXCLUDED."treeSha" AND "RunCommit"."firstParentSha" IS NOT DISTINCT FROM EXCLUDED."firstParentSha" AND "RunCommit"."sequence"=EXCLUDED."sequence"
+       RETURNING "id"`,
+      [commit.id, commit.runId, commit.sha, commit.shortSha, commit.firstParentSha, commit.treeSha, commit.sequence, commit.message, commit.authorName, commit.authoredAt, commit.committedAt, commit.additions, commit.deletions, commit.changedFileCount, commit.externalUrl],
+    );
+    if (commitResult.rowCount !== 1) throw new RepoReplayError("PROCESSING_FAILED", "Commit immutable fields conflict with existing staged data.", { sha: commit.sha });
+    const persistedCommitId = commitResult.rows[0].id;
+    for (const file of commit.files) {
+      const fileResult = await client.query(
+        `INSERT INTO "CommitFile"("id","runId","runCommitId","path","previousPath","status","additions","deletions","changes")
+         VALUES($1,$2,$3,$4,$5,$6::"CommitFileStatus",$7,$8,$9)
+         ON CONFLICT("runCommitId","path","status") DO UPDATE SET "previousPath"=EXCLUDED."previousPath","additions"=EXCLUDED."additions","deletions"=EXCLUDED."deletions","changes"=EXCLUDED."changes","runId"=EXCLUDED."runId"
+         RETURNING "id"`,
+        [file.id, commit.runId, persistedCommitId, file.path, file.previousPath, file.status, file.additions, file.deletions, file.changes],
+      );
+      if (fileResult.rowCount !== 1) throw new RepoReplayError("PROCESSING_FAILED", "File persistence failed: lease lost or constraint violation.", { path: file.path });
+    }
   }
   return true;
 }
