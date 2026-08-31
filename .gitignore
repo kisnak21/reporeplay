@@ -7,4 +7,5 @@ generated/
 .env
 .env.local
 *.log
+*.pem
 *.tsbuildinfo

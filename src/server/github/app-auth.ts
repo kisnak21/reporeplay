@@ -1,4 +1,4 @@
-import { SignJWT, importPKCS8 } from "jose";
+import { createPrivateKey, createSign } from "node:crypto";
 
 export interface AppAuth {
   appId: string;
@@ -15,14 +15,17 @@ function normalizePrivateKey(key: string): string {
 }
 
 export async function createAppJwt(appId: string, privateKey: string): Promise<string> {
-  const key = await importPKCS8(normalizePrivateKey(privateKey), "RS256");
+  const normalized = normalizePrivateKey(privateKey);
+  const keyObject = createPrivateKey(normalized);
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({})
-    .setProtectedHeader({ alg: "RS256" })
-    .setIssuedAt(now - 60)
-    .setExpirationTime(now + 600)
-    .setIssuer(appId)
-    .sign(key);
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ iat: now - 60, exp: now + 600, iss: appId })).toString("base64url");
+  const data = `${header}.${payload}`;
+  const signer = createSign("RSA-SHA256");
+  signer.update(data);
+  signer.end();
+  const signature = signer.sign(keyObject, "base64url");
+  return `${data}.${signature}`;
 }
 
 export async function getInstallationToken(auth: AppAuth, fetchImpl: typeof fetch = fetch): Promise<string> {
