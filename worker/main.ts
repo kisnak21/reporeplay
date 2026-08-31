@@ -6,6 +6,7 @@ import type { RetryPolicy } from "../src/server/jobs/retry-policy";
 import { createGitHubSourceFromEnvironment } from "../src/server/github/client";
 import { RepoReplayError } from "../src/server/github/errors";
 import { ingestFirstParentHistory } from "../src/server/processing/ingest-first-parent";
+import { persistCategoriesForRun } from "../src/server/processing/classifier";
 import { startJobHeartbeat } from "./heartbeat";
 import { createWorkerId } from "./identity";
 import { startSweeper } from "./sweeper";
@@ -51,6 +52,10 @@ async function startWorker(): Promise<void> {
       const source = createGitHubSourceFromEnvironment(environment);
       await Promise.race([
         ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits }),
+        heartbeat.lostLease,
+      ]);
+      await Promise.race([
+        persistCategoriesForRun(pool, { jobId: job.jobId, runId: job.runId, repositoryId: job.repositoryId, workerId: job.workerId, leaseGeneration: job.leaseGeneration, step: "CLASSIFY_COMMITS", sequence: 0 }),
         heartbeat.lostLease,
       ]);
       const completed = await completeJob(pool, job);

@@ -74,6 +74,17 @@ export async function writeCandidates(client: PoolClient, job: CheckpointInput, 
   return true;
 }
 
+export async function writeCategories(client: PoolClient, job: CheckpointInput, categories: Array<{ runId: string; runCommitId: string; category: string; source: string; matchedType: string | null }>): Promise<boolean> {
+  if (!(await assertLease(client, job))) return false;
+  for (const cat of categories) {
+    await client.query(
+      `INSERT INTO "CommitCategory"("id","runId","runCommitId","category","source","matchedType") VALUES(gen_random_uuid(),$1,$2,$3::"CommitCategoryValue",$4::"CommitCategorySource",$5) ON CONFLICT("runCommitId") DO UPDATE SET "category"=EXCLUDED."category","source"=EXCLUDED."source","matchedType"=EXCLUDED."matchedType"`,
+      [cat.runId, cat.runCommitId, cat.category, cat.source, cat.matchedType],
+    );
+  }
+  return true;
+}
+
 export async function assertLease(client: PoolClient, job: CheckpointInput): Promise<boolean> {
   const result = await client.query(`SELECT 1 FROM "ProcessingJob" j JOIN "ProcessingRun" r ON r."id"=j."runId" JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$1 AND j."runId"=$2 AND r."repositoryId"=$3 AND j."status"='RUNNING' AND j."leaseOwner"=$4 AND j."leaseGeneration"=$5 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL`, [job.jobId, job.runId, job.repositoryId, job.workerId, job.leaseGeneration]);
   return result.rowCount === 1;
