@@ -10,7 +10,7 @@ import type { Pool } from "pg";
 export interface IngestFirstParentOptions {
   source: GitHubRepositorySource;
   pool: Pool;
-  job: CheckpointInput;
+  job: { jobId: string; runId: string; repositoryId: string; workerId: string; leaseGeneration: number };
   owner: string;
   name: string;
   headSha: string;
@@ -54,7 +54,7 @@ export async function ingestFirstParentHistory(options: IngestFirstParentOptions
   for (let index = 0; index < commits.length; index += batchSize) {
     const batch = commits.slice(index, index + batchSize);
     const lastSequence = batch.at(-1)?.sequence ?? 0;
-    const checkpoint: CheckpointInput = { ...job, sequence: lastSequence, step: "FETCH_COMMITS" };
+    const checkpoint: CheckpointInput = { jobId: job.jobId, runId: job.runId, repositoryId: job.repositoryId, workerId: job.workerId, leaseGeneration: job.leaseGeneration, sequence: lastSequence, step: "FETCH_COMMITS" };
     const written = await writeCheckpointedCommitBatch(pool, checkpoint, batch);
     if (!written) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist commit batch: lease lost.", { sequence: lastSequence });
   }

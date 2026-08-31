@@ -1,8 +1,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseEnvironment } from "../src/lib/environment";
 import { createDatabasePool } from "../src/server/db/pool";
-import { claimNextDueJob, recordWorkerHeartbeat, scheduleRetry, type ClaimedJob } from "../src/server/jobs/repository";
+import { claimNextDueJob, completeJob, failJob, getJobRunContext, markRateLimited, recordWorkerHeartbeat, scheduleRetry, type ClaimedJob } from "../src/server/jobs/repository";
 import type { RetryPolicy } from "../src/server/jobs/retry-policy";
+import { createGitHubSourceFromEnvironment } from "../src/server/github/client";
+import { RepoReplayError } from "../src/server/github/errors";
+import { ingestFirstParentHistory } from "../src/server/processing/ingest-first-parent";
 import { startJobHeartbeat } from "./heartbeat";
 import { createWorkerId } from "./identity";
 import { startSweeper } from "./sweeper";
@@ -34,17 +37,44 @@ async function startWorker(): Promise<void> {
     while (!shuttingDown && active.size < environment.WORKER_CONCURRENCY) {
       const job = await claimNextDueJob(pool, workerId, environment.JOB_LEASE_SECONDS);
       if (!job) break;
-      const execution = executePlaceholderJob(job).finally(() => active.delete(execution));
+      const execution = executeJob(job).finally(() => active.delete(execution));
       active.add(execution);
     }
     await sleep(environment.WORKER_POLL_INTERVAL_MS);
   }
 
-  async function executePlaceholderJob(job: ClaimedJob): Promise<void> {
+  async function executeJob(job: ClaimedJob): Promise<void> {
     const heartbeat = startJobHeartbeat(pool, job, environment.JOB_HEARTBEAT_SECONDS, environment.JOB_LEASE_SECONDS);
     try {
-      await Promise.race([sleep(50), heartbeat.lostLease]);
-      await scheduleRetry(pool, job, retryPolicy, "PROCESSOR_NOT_IMPLEMENTED", "Repository processing steps are not implemented yet.");
+      const context = await getJobRunContext(pool, job.runId);
+      if (!context) throw new RepoReplayError("PROCESSING_FAILED", "Run context not found.");
+      const source = createGitHubSourceFromEnvironment(environment);
+      await Promise.race([
+        ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits }),
+        heartbeat.lostLease,
+      ]);
+      const completed = await completeJob(pool, job);
+      if (!completed) throw new RepoReplayError("PROCESSING_FAILED", "Failed to complete job: lease lost.");
+    } catch (error) {
+      if (error instanceof RepoReplayError) {
+        if (error.code === "GITHUB_RATE_LIMITED") {
+          const resetAt = error.details.resetAt ? new Date(String(error.details.resetAt)) : new Date(Date.now() + 60_000);
+          await markRateLimited(pool, job, resetAt, error.code, error.message);
+          return;
+        }
+        if (error.code === "GITHUB_UNAVAILABLE" || error.code === "GITHUB_DATA_TRUNCATED") {
+          const result = await scheduleRetry(pool, job, retryPolicy, error.code, error.message);
+          if (result === "LEASE_LOST") return;
+          return;
+        }
+        if (error.code === "REPOSITORY_LIMIT_EXCEEDED" || error.code === "REPOSITORY_NOT_FOUND" || error.code === "EMPTY_REPOSITORY" || error.code === "UNSUPPORTED_REPOSITORY") {
+          await failJob(pool, job, error.code, error.message);
+          return;
+        }
+        await failJob(pool, job, error.code, error.message);
+        return;
+      }
+      await scheduleRetry(pool, job, retryPolicy, "PROCESSING_FAILED", error instanceof Error ? error.message : "Unknown processing failure");
     } finally {
       heartbeat.stop();
     }

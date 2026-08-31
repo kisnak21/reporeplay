@@ -111,6 +111,53 @@ export async function getQueueHealth(pool: Pool): Promise<{ dueJobs: number; exp
   return result.rows[0];
 }
 
+export async function getJobRunContext(pool: Pool, runId: string): Promise<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; maxCommits: number } | null> {
+  const result = await pool.query<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; maxCommits: number }>(
+    `SELECT r."repositoryId", repo."owner", repo."name", r."headSha", r."defaultBranch", r."maxCommitLimit" AS "maxCommits" FROM "ProcessingRun" r JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE r."id"=$1`,
+    [runId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function completeJob(pool: Pool, job: ClaimedJob): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const jobResult = await client.query(
+      `UPDATE "ProcessingJob" SET "status"='SUCCEEDED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "runId"=$2 AND "status"='RUNNING' AND "leaseOwner"=$3 AND "leaseGeneration"=$4 AND "leaseExpiresAt">CURRENT_TIMESTAMP RETURNING "runId"`,
+      [job.jobId, job.runId, job.workerId, job.leaseGeneration],
+    );
+    if (jobResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
+    await client.query(`UPDATE "ProcessingRun" SET "status"='SUCCEEDED',"completedAt"=CURRENT_TIMESTAMP,"currentStep"='COMPLETE',"checkpointSequence"=(SELECT COALESCE(MAX("sequence"),-1) FROM "RunCommit" WHERE "runId"=$1) WHERE "id"=$1`, [job.runId]);
+    await client.query("COMMIT");
+    return true;
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+
+export async function failJob(pool: Pool, job: ClaimedJob, code: string, message: string): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const jobResult = await client.query(`UPDATE "ProcessingJob" SET "status"='FAILED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$1,"lastErrorMessage"=$2,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$3 AND "runId"=$4 AND "status"='RUNNING' AND "leaseOwner"=$5 AND "leaseGeneration"=$6 RETURNING "runId"`, [code, message, job.jobId, job.runId, job.workerId, job.leaseGeneration]);
+    if (jobResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
+    await client.query(`UPDATE "ProcessingRun" SET "status"='FAILED',"errorCode"=$1,"errorMessage"=$2,"completedAt"=CURRENT_TIMESTAMP WHERE "id"=$3`, [code, message, job.runId]);
+    await client.query("COMMIT");
+    return true;
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+
+export async function markRateLimited(pool: Pool, job: ClaimedJob, resetAt: Date, code = "GITHUB_RATE_LIMITED", message = "GitHub rate limit exceeded."): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const jobResult = await client.query(`UPDATE "ProcessingJob" SET "status"='WAITING_RATE_LIMIT',"nextAttemptAt"=$1,"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$2,"lastErrorMessage"=$3,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$4 AND "runId"=$5 AND "status"='RUNNING' AND "leaseOwner"=$6 AND "leaseGeneration"=$7 RETURNING "runId"`, [resetAt, code, message, job.jobId, job.runId, job.workerId, job.leaseGeneration]);
+    if (jobResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
+    await client.query(`UPDATE "ProcessingRun" SET "status"='WAITING_RATE_LIMIT',"errorCode"=$1,"errorMessage"=$2 WHERE "id"=$3`, [code, message, job.runId]);
+    await client.query("COMMIT");
+    return true;
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+
 export async function withTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect(); try { await client.query("BEGIN"); const result = await operation(client); await client.query("COMMIT"); return result; } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 }
