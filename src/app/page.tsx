@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { ImportFlow } from "@/components/import-flow";
-import { preflightFixture, publicLimits } from "@/features/fixtures/repository-fixtures";
 import { ui } from "@/lib/ui";
 
 export default function Home() {
-  return <><SiteHeader /><main className={ui.shell} id="main-content"><ImportFlow limits={publicLimits} preflight={preflightFixture} /></main></>;
+  return <><SiteHeader /><main className={ui.shell} id="main-content"><ImportFlow /></main></>;
 }
 
 function SiteHeader() {
