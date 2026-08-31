@@ -22,7 +22,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body className={`${manrope.variable} ${ibmPlexMono.variable}`}>
-        <a className="skip-link" href="#main-content">Skip to content</a>
+        <a className="fixed left-3 top-3 z-50 -translate-y-[180%] bg-ink px-4 py-3 text-void focus:translate-y-0" href="#main-content">Skip to content</a>
         {children}
       </body>
     </html>
