@@ -86,7 +86,9 @@ A run freezes source scope and detector provenance.
 | dependencyDetectorVersion | string | independent provenance |
 | routeDetectorVersion | string | independent provenance |
 | currentStep | enum | processing checkpoint step |
-| processedCommitCount | integer | progress counter |
+| processedCommitCount | integer | derived contiguous progress count |
+| checkpointSequence | integer | highest contiguous sequence completed for `currentStep`; `-1` means none |
+| checkpointUpdatedAt | datetime? | last durable checkpoint write |
 | requestedAt | datetime | |
 | startedAt | datetime? | |
 | completedAt | datetime? | |
@@ -130,7 +132,8 @@ One job executes one run.
 | runId | UUID | unique, cascade delete |
 | status | enum | same executable statuses as run, excluding `NEEDS_CONFIGURATION` |
 | priority | integer | default 0 |
-| attemptCount | integer | |
+| attemptCount | integer | incremented on claim |
+| leaseGeneration | integer | monotonic fencing token incremented on claim |
 | maxAttempts | integer | |
 | nextAttemptAt | datetime | due time |
 | leaseOwner | string? | worker instance ID |
@@ -190,6 +193,7 @@ Timeline cursors encode active run ID and sequence. A cursor from an obsolete ru
 | Field | Type | Notes |
 |---|---|---|
 | id | UUID | |
+| runId | UUID | denormalized active-run query scope |
 | runCommitId | UUID | cascade delete |
 | path | string | path after change, or removed path |
 | previousPath | string? | rename source |
@@ -202,17 +206,12 @@ Indexes:
 
 ```text
 UNIQUE(runCommitId, path, status)
+FOREIGN KEY(runId, runCommitId) REFERENCES RunCommit(runId, id)
 INDEX(runCommitId)
-INDEX(path)
-```
-
-For efficient repository-scoped path filtering, implementations may add `runId` as a denormalized foreign key with:
-
-```text
 INDEX(runId, path)
 ```
 
-The application must maintain that field transactionally if adopted.
+`runId` is maintained transactionally and participates in a composite foreign key, preventing a file from referencing a commit in another run.
 
 ## 9. CommitCategory
 
@@ -287,6 +286,13 @@ INDEX(route)
 | message | text | safe user-facing limitation |
 | detectorVersion | string? | provenance |
 | createdAt | datetime | |
+
+Constraints:
+
+```text
+FOREIGN KEY(runId, runCommitId) REFERENCES RunCommit(runId, id)
+UNIQUE NULLS NOT DISTINCT(runId, runCommitId, code, detector, path, detectorVersion)
+```
 
 Indexes:
 

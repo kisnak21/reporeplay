@@ -1,0 +1,54 @@
+CREATE TYPE "CommitFileStatus" AS ENUM ('ADDED', 'MODIFIED', 'REMOVED', 'RENAMED');
+CREATE TYPE "CommitCategoryValue" AS ENUM ('FEATURE', 'FIX', 'REFACTOR', 'DOCS', 'TEST', 'STYLE', 'BUILD', 'CHORE', 'PERFORMANCE', 'CI', 'REVERT', 'UNCATEGORIZED');
+CREATE TYPE "CommitCategorySource" AS ENUM ('CONVENTIONAL_COMMIT', 'NONE');
+CREATE TYPE "DependencyGroup" AS ENUM ('DEPENDENCY', 'DEV_DEPENDENCY', 'PEER_DEPENDENCY', 'OPTIONAL_DEPENDENCY');
+CREATE TYPE "DependencyChangeType" AS ENUM ('ADDED', 'REMOVED', 'UPDATED');
+CREATE TYPE "RouteRouter" AS ENUM ('APP', 'PAGES');
+CREATE TYPE "RouteType" AS ENUM ('PAGE', 'API');
+CREATE TYPE "RouteChangeType" AS ENUM ('ADDED', 'REMOVED');
+CREATE TYPE "WarningDetector" AS ENUM ('SOURCE', 'DEPENDENCY', 'ROUTE');
+
+ALTER TABLE "ProcessingRun" ADD COLUMN "checkpointSequence" INTEGER NOT NULL DEFAULT -1, ADD COLUMN "checkpointUpdatedAt" TIMESTAMPTZ;
+ALTER TABLE "ProcessingRun" ADD CONSTRAINT "ProcessingRun_counts_check" CHECK ("processedCommitCount" >= 0 AND ("expectedCommitCount" IS NULL OR "expectedCommitCount" >= 0) AND "headFileCount" >= 0 AND "maxCommitLimit" > 0 AND "maxHeadFileLimit" > 0 AND "checkpointSequence" >= -1);
+
+CREATE TABLE "RunAppRootCandidate" ("id" UUID NOT NULL,"runId" UUID NOT NULL,"path" TEXT NOT NULL,"evidenceManifestPath" TEXT NOT NULL,"routeRoots" TEXT[] DEFAULT ARRAY[]::TEXT[],"createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,CONSTRAINT "RunAppRootCandidate_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "RunCommit" ("id" UUID NOT NULL,"runId" UUID NOT NULL,"sha" TEXT NOT NULL,"shortSha" TEXT NOT NULL,"firstParentSha" TEXT,"treeSha" TEXT NOT NULL,"sequence" INTEGER NOT NULL,"message" TEXT NOT NULL,"authorName" TEXT,"authoredAt" TIMESTAMPTZ,"committedAt" TIMESTAMPTZ NOT NULL,"additions" INTEGER NOT NULL,"deletions" INTEGER NOT NULL,"changedFileCount" INTEGER NOT NULL,"externalUrl" TEXT NOT NULL,CONSTRAINT "RunCommit_pkey" PRIMARY KEY ("id"),CONSTRAINT "RunCommit_counts_check" CHECK ("sequence" >= 0 AND "additions" >= 0 AND "deletions" >= 0 AND "changedFileCount" >= 0));
+CREATE TABLE "CommitFile" ("id" UUID NOT NULL,"runId" UUID NOT NULL,"runCommitId" UUID NOT NULL,"path" TEXT NOT NULL,"previousPath" TEXT,"status" "CommitFileStatus" NOT NULL,"additions" INTEGER NOT NULL,"deletions" INTEGER NOT NULL,"changes" INTEGER NOT NULL,CONSTRAINT "CommitFile_pkey" PRIMARY KEY ("id"),CONSTRAINT "CommitFile_counts_check" CHECK ("additions" >= 0 AND "deletions" >= 0 AND "changes" >= 0),CONSTRAINT "CommitFile_rename_check" CHECK (("status" = 'RENAMED' AND "previousPath" IS NOT NULL) OR ("status" <> 'RENAMED' AND "previousPath" IS NULL)));
+CREATE TABLE "CommitCategory" ("id" UUID NOT NULL,"runId" UUID NOT NULL,"runCommitId" UUID NOT NULL,"category" "CommitCategoryValue" NOT NULL,"source" "CommitCategorySource" NOT NULL,"matchedType" TEXT,CONSTRAINT "CommitCategory_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "DependencyChange" ("id" UUID NOT NULL,"runId" UUID NOT NULL,"runCommitId" UUID NOT NULL,"manifestPath" TEXT NOT NULL,"packageName" TEXT NOT NULL,"dependencyGroup" "DependencyGroup" NOT NULL,"changeType" "DependencyChangeType" NOT NULL,"previousValue" TEXT,"currentValue" TEXT,CONSTRAINT "DependencyChange_pkey" PRIMARY KEY ("id"),CONSTRAINT "DependencyChange_values_check" CHECK (("changeType"='ADDED' AND "previousValue" IS NULL AND "currentValue" IS NOT NULL) OR ("changeType"='REMOVED' AND "previousValue" IS NOT NULL AND "currentValue" IS NULL) OR ("changeType"='UPDATED' AND "previousValue" IS NOT NULL AND "currentValue" IS NOT NULL)));
+CREATE TABLE "RouteChange" ("id" UUID NOT NULL,"runId" UUID NOT NULL,"runCommitId" UUID NOT NULL,"router" "RouteRouter" NOT NULL,"route" TEXT NOT NULL,"sourcePath" TEXT NOT NULL,"routeType" "RouteType" NOT NULL,"changeType" "RouteChangeType" NOT NULL,CONSTRAINT "RouteChange_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "ProcessingWarning" ("id" UUID NOT NULL,"runId" UUID NOT NULL,"runCommitId" UUID,"code" TEXT NOT NULL,"detector" "WarningDetector","path" TEXT,"message" TEXT NOT NULL,"detectorVersion" TEXT,"createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,CONSTRAINT "ProcessingWarning_pkey" PRIMARY KEY ("id"));
+
+CREATE INDEX "RunAppRootCandidate_runId_idx" ON "RunAppRootCandidate"("runId");
+CREATE UNIQUE INDEX "RunAppRootCandidate_runId_path_key" ON "RunAppRootCandidate"("runId","path");
+CREATE INDEX "RunCommit_runId_sequence_idx" ON "RunCommit"("runId","sequence" DESC);
+CREATE INDEX "RunCommit_runId_committedAt_sequence_idx" ON "RunCommit"("runId","committedAt" DESC,"sequence" DESC);
+CREATE UNIQUE INDEX "RunCommit_runId_id_key" ON "RunCommit"("runId","id");
+CREATE UNIQUE INDEX "RunCommit_runId_sha_key" ON "RunCommit"("runId","sha");
+CREATE UNIQUE INDEX "RunCommit_runId_sequence_key" ON "RunCommit"("runId","sequence");
+CREATE INDEX "CommitFile_runCommitId_idx" ON "CommitFile"("runCommitId");
+CREATE INDEX "CommitFile_runId_path_idx" ON "CommitFile"("runId","path");
+CREATE UNIQUE INDEX "CommitFile_runCommitId_path_status_key" ON "CommitFile"("runCommitId","path","status");
+CREATE UNIQUE INDEX "CommitCategory_runCommitId_key" ON "CommitCategory"("runCommitId");
+CREATE INDEX "CommitCategory_runId_category_idx" ON "CommitCategory"("runId","category");
+CREATE UNIQUE INDEX "CommitCategory_runId_runCommitId_key" ON "CommitCategory"("runId","runCommitId");
+CREATE INDEX "DependencyChange_runCommitId_idx" ON "DependencyChange"("runCommitId");
+CREATE INDEX "DependencyChange_runId_packageName_idx" ON "DependencyChange"("runId","packageName");
+CREATE UNIQUE INDEX "DependencyChange_natural_key" ON "DependencyChange"("runCommitId","manifestPath","packageName","dependencyGroup","changeType");
+CREATE INDEX "RouteChange_runCommitId_idx" ON "RouteChange"("runCommitId");
+CREATE INDEX "RouteChange_runId_route_idx" ON "RouteChange"("runId","route");
+CREATE UNIQUE INDEX "RouteChange_natural_key" ON "RouteChange"("runCommitId","router","route","sourcePath","changeType");
+CREATE INDEX "ProcessingWarning_runId_code_idx" ON "ProcessingWarning"("runId","code");
+CREATE INDEX "ProcessingWarning_runCommitId_idx" ON "ProcessingWarning"("runCommitId");
+CREATE UNIQUE INDEX "ProcessingWarning_natural_key" ON "ProcessingWarning"("runId","runCommitId","code","detector","path","detectorVersion") NULLS NOT DISTINCT;
+CREATE INDEX "ProcessingRun_repositoryId_status_completedAt_idx" ON "ProcessingRun"("repositoryId","status","completedAt");
+CREATE UNIQUE INDEX "ProcessingRun_repositoryId_id_key" ON "ProcessingRun"("repositoryId","id");
+
+ALTER TABLE "RunAppRootCandidate" ADD CONSTRAINT "RunAppRootCandidate_runId_fkey" FOREIGN KEY ("runId") REFERENCES "ProcessingRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RunCommit" ADD CONSTRAINT "RunCommit_runId_fkey" FOREIGN KEY ("runId") REFERENCES "ProcessingRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "CommitFile" ADD CONSTRAINT "CommitFile_runId_runCommitId_fkey" FOREIGN KEY ("runId","runCommitId") REFERENCES "RunCommit"("runId","id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "CommitCategory" ADD CONSTRAINT "CommitCategory_runId_runCommitId_fkey" FOREIGN KEY ("runId","runCommitId") REFERENCES "RunCommit"("runId","id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "DependencyChange" ADD CONSTRAINT "DependencyChange_runId_runCommitId_fkey" FOREIGN KEY ("runId","runCommitId") REFERENCES "RunCommit"("runId","id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RouteChange" ADD CONSTRAINT "RouteChange_runId_runCommitId_fkey" FOREIGN KEY ("runId","runCommitId") REFERENCES "RunCommit"("runId","id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ProcessingWarning" ADD CONSTRAINT "ProcessingWarning_runId_fkey" FOREIGN KEY ("runId") REFERENCES "ProcessingRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ProcessingWarning" ADD CONSTRAINT "ProcessingWarning_same_run_commit_fkey" FOREIGN KEY ("runId","runCommitId") REFERENCES "RunCommit"("runId","id") ON DELETE CASCADE ON UPDATE CASCADE;

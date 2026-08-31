@@ -51,6 +51,67 @@ enum ProcessingStep {
   COMPLETE
 }
 
+enum CommitFileStatus {
+  ADDED
+  MODIFIED
+  REMOVED
+  RENAMED
+}
+
+enum CommitCategoryValue {
+  FEATURE
+  FIX
+  REFACTOR
+  DOCS
+  TEST
+  STYLE
+  BUILD
+  CHORE
+  PERFORMANCE
+  CI
+  REVERT
+  UNCATEGORIZED
+}
+
+enum CommitCategorySource {
+  CONVENTIONAL_COMMIT
+  NONE
+}
+
+enum DependencyGroup {
+  DEPENDENCY
+  DEV_DEPENDENCY
+  PEER_DEPENDENCY
+  OPTIONAL_DEPENDENCY
+}
+
+enum DependencyChangeType {
+  ADDED
+  REMOVED
+  UPDATED
+}
+
+enum RouteRouter {
+  APP
+  PAGES
+}
+
+enum RouteType {
+  PAGE
+  API
+}
+
+enum RouteChangeType {
+  ADDED
+  REMOVED
+}
+
+enum WarningDetector {
+  SOURCE
+  DEPENDENCY
+  ROUTE
+}
+
 model Repository {
   id              String                 @id @default(uuid()) @db.Uuid
   provider        String
@@ -77,8 +138,8 @@ model Repository {
 }
 
 model ProcessingRun {
-  id                        String              @id @default(uuid()) @db.Uuid
-  repositoryId              String              @db.Uuid
+  id                        String                @id @default(uuid()) @db.Uuid
+  repositoryId              String                @db.Uuid
   kind                      ProcessingRunKind
   status                    ProcessingRunStatus
   selectedAppRoot           String?
@@ -94,30 +155,157 @@ model ProcessingRun {
   dependencyDetectorVersion String
   routeDetectorVersion      String
   currentStep               ProcessingStep
-  processedCommitCount      Int                 @default(0)
-  requestedAt               DateTime            @default(now()) @db.Timestamptz
-  startedAt                 DateTime?           @db.Timestamptz
-  completedAt               DateTime?           @db.Timestamptz
-  activatedAt               DateTime?           @db.Timestamptz
+  processedCommitCount      Int                   @default(0)
+  checkpointSequence        Int                   @default(-1)
+  checkpointUpdatedAt       DateTime?             @db.Timestamptz
+  requestedAt               DateTime              @default(now()) @db.Timestamptz
+  startedAt                 DateTime?             @db.Timestamptz
+  completedAt               DateTime?             @db.Timestamptz
+  activatedAt               DateTime?             @db.Timestamptz
   errorCode                 String?
   errorMessage              String?
-  repository                Repository          @relation("RepositoryRuns", fields: [repositoryId], references: [id], onDelete: Cascade)
-  activeFor                 Repository?         @relation("ActiveRun")
-  previousFor               Repository?         @relation("PreviousRun")
+  repository                Repository            @relation("RepositoryRuns", fields: [repositoryId], references: [id], onDelete: Cascade)
+  activeFor                 Repository?           @relation("ActiveRun")
+  previousFor               Repository?           @relation("PreviousRun")
   job                       ProcessingJob?
+  appRootCandidates         RunAppRootCandidate[]
+  commits                   RunCommit[]
+  warnings                  ProcessingWarning[]
 
+  @@unique([repositoryId, id])
   @@index([repositoryId, requestedAt(sort: Desc)])
-  @@index([repositoryId, status])
+  @@index([repositoryId, status, completedAt])
+}
+
+model RunAppRootCandidate {
+  id                   String        @id @default(uuid()) @db.Uuid
+  runId                String        @db.Uuid
+  path                 String
+  evidenceManifestPath String
+  routeRoots           String[]      @default([])
+  createdAt            DateTime      @default(now()) @db.Timestamptz
+  run                  ProcessingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, path])
+  @@index([runId])
+}
+
+model RunCommit {
+  id                String             @id @default(uuid()) @db.Uuid
+  runId             String             @db.Uuid
+  sha               String
+  shortSha          String
+  firstParentSha    String?
+  treeSha           String
+  sequence          Int
+  message           String
+  authorName        String?
+  authoredAt        DateTime?          @db.Timestamptz
+  committedAt       DateTime           @db.Timestamptz
+  additions         Int
+  deletions         Int
+  changedFileCount  Int
+  externalUrl       String
+  run               ProcessingRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  files             CommitFile[]
+  category          CommitCategory?
+  dependencyChanges DependencyChange[]
+  routeChanges      RouteChange[]
+
+  @@unique([runId, id])
+  @@unique([runId, sha])
+  @@unique([runId, sequence])
+  @@index([runId, sequence(sort: Desc)])
+  @@index([runId, committedAt(sort: Desc), sequence(sort: Desc)])
+}
+
+model CommitFile {
+  id           String           @id @default(uuid()) @db.Uuid
+  runId        String           @db.Uuid
+  runCommitId  String           @db.Uuid
+  path         String
+  previousPath String?
+  status       CommitFileStatus
+  additions    Int
+  deletions    Int
+  changes      Int
+  commit       RunCommit        @relation(fields: [runId, runCommitId], references: [runId, id], onDelete: Cascade)
+
+  @@unique([runCommitId, path, status])
+  @@index([runCommitId])
+  @@index([runId, path])
+}
+
+model CommitCategory {
+  id          String               @id @default(uuid()) @db.Uuid
+  runId       String               @db.Uuid
+  runCommitId String               @unique @db.Uuid
+  category    CommitCategoryValue
+  source      CommitCategorySource
+  matchedType String?
+  commit      RunCommit            @relation(fields: [runId, runCommitId], references: [runId, id], onDelete: Cascade)
+
+  @@unique([runId, runCommitId])
+  @@index([runId, category])
+}
+
+model DependencyChange {
+  id              String               @id @default(uuid()) @db.Uuid
+  runId           String               @db.Uuid
+  runCommitId     String               @db.Uuid
+  manifestPath    String
+  packageName     String
+  dependencyGroup DependencyGroup
+  changeType      DependencyChangeType
+  previousValue   String?
+  currentValue    String?
+  commit          RunCommit            @relation(fields: [runId, runCommitId], references: [runId, id], onDelete: Cascade)
+
+  @@unique([runCommitId, manifestPath, packageName, dependencyGroup, changeType])
+  @@index([runCommitId])
+  @@index([runId, packageName])
+}
+
+model RouteChange {
+  id          String          @id @default(uuid()) @db.Uuid
+  runId       String          @db.Uuid
+  runCommitId String          @db.Uuid
+  router      RouteRouter
+  route       String
+  sourcePath  String
+  routeType   RouteType
+  changeType  RouteChangeType
+  commit      RunCommit       @relation(fields: [runId, runCommitId], references: [runId, id], onDelete: Cascade)
+
+  @@unique([runCommitId, router, route, sourcePath, changeType])
+  @@index([runCommitId])
+  @@index([runId, route])
+}
+
+model ProcessingWarning {
+  id              String           @id @default(uuid()) @db.Uuid
+  runId           String           @db.Uuid
+  runCommitId     String?          @db.Uuid
+  code            String
+  detector        WarningDetector?
+  path            String?
+  message         String
+  detectorVersion String?
+  createdAt       DateTime         @default(now()) @db.Timestamptz
+  run             ProcessingRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, code])
+  @@index([runCommitId])
 }
 
 model WorkerHeartbeat {
-  workerId       String   @id
-  startedAt      DateTime @default(now()) @db.Timestamptz
-  lastHeartbeatAt DateTime @default(now()) @db.Timestamptz
-  lastClaimAt    DateTime? @db.Timestamptz
-  lastSuccessAt  DateTime? @db.Timestamptz
-  currentJobId   String?   @db.Uuid
-  processVersion String
+  workerId        String    @id
+  startedAt       DateTime  @default(now()) @db.Timestamptz
+  lastHeartbeatAt DateTime  @default(now()) @db.Timestamptz
+  lastClaimAt     DateTime? @db.Timestamptz
+  lastSuccessAt   DateTime? @db.Timestamptz
+  currentJobId    String?   @db.Uuid
+  processVersion  String
 
   @@index([lastHeartbeatAt])
 }

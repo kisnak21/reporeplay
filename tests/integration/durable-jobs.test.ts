@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { claimNextDueJob, heartbeatJob, recoverExpiredJobs, requestCancellation } from "../../src/server/jobs/repository";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -9,6 +9,8 @@ const retryPolicy = { baseSeconds: 1, maxSeconds: 10, jitterPercent: 0 };
 describeDatabase("durable PostgreSQL jobs", () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 6 });
   beforeAll(async () => pool.query("SELECT 1"));
+  beforeEach(async () => cleanupFixtures(pool));
+  afterEach(async () => cleanupFixtures(pool));
   afterAll(async () => pool.end());
 
   it("allows only one competing worker to claim a job", async () => {
@@ -77,4 +79,8 @@ async function createFixture(pool: Pool, suffix: string, maxAttempts = 4): Promi
 
 async function cleanup(pool: Pool, repositoryId: string): Promise<void> {
   await pool.query(`DELETE FROM "Repository" WHERE "id"=$1`, [repositoryId]);
+}
+
+async function cleanupFixtures(pool: Pool): Promise<void> {
+  await pool.query(`DELETE FROM "Repository" WHERE "externalId" LIKE 'durable-%'`);
 }
