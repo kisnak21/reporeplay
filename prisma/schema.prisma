@@ -30,6 +30,16 @@ enum ProcessingRunKind {
   REPROCESS
 }
 
+enum ProcessingJobStatus {
+  QUEUED
+  RUNNING
+  WAITING_RATE_LIMIT
+  RETRYABLE
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
 enum ProcessingStep {
   DISCOVER_HISTORY
   FETCH_COMMITS
@@ -100,12 +110,25 @@ model ProcessingRun {
   @@index([repositoryId, status])
 }
 
+model WorkerHeartbeat {
+  workerId       String   @id
+  startedAt      DateTime @default(now()) @db.Timestamptz
+  lastHeartbeatAt DateTime @default(now()) @db.Timestamptz
+  lastClaimAt    DateTime? @db.Timestamptz
+  lastSuccessAt  DateTime? @db.Timestamptz
+  currentJobId   String?   @db.Uuid
+  processVersion String
+
+  @@index([lastHeartbeatAt])
+}
+
 model ProcessingJob {
   id                String              @id @default(uuid()) @db.Uuid
   runId             String              @unique @db.Uuid
-  status            ProcessingRunStatus
+  status            ProcessingJobStatus
   priority          Int                 @default(0)
   attemptCount      Int                 @default(0)
+  leaseGeneration   Int                 @default(0)
   maxAttempts       Int                 @default(4)
   nextAttemptAt     DateTime            @default(now()) @db.Timestamptz
   leaseOwner        String?
