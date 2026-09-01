@@ -68,6 +68,23 @@ export async function requestCancellation(pool: Pool, jobId: string): Promise<"C
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 }
 
+export async function finalizeCancellation(pool: Pool, job: ClaimedJob): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const updated = await client.query<{ runId: string }>(`UPDATE "ProcessingJob" SET "status"='CANCELLED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "runId"=$2 AND "status"='RUNNING' AND "leaseOwner"=$3 AND "leaseGeneration"=$4 AND "cancelRequestedAt" IS NOT NULL RETURNING "runId"`, [job.jobId, job.runId, job.workerId, job.leaseGeneration]);
+    if (!updated.rows[0]) { await client.query("ROLLBACK"); return false; }
+    await client.query(`UPDATE "ProcessingRun" SET "status"='CANCELLED',"completedAt"=CURRENT_TIMESTAMP,"errorCode"=NULL,"errorMessage"=NULL WHERE "id"=$1`, [updated.rows[0].runId]);
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function scheduleRetry(pool: Pool, job: ClaimedJob, policy: RetryPolicy, code: string, message: string, random?: () => number): Promise<"RETRYABLE" | "FAILED" | "LEASE_LOST"> {
   const client = await pool.connect();
   try {
@@ -87,11 +104,16 @@ export async function recoverExpiredJobs(pool: Pool, policy: RetryPolicy): Promi
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const jobs = await client.query<{ id: string; runId: string; attemptCount: number; maxAttempts: number }>(`SELECT "id","runId","attemptCount","maxAttempts" FROM "ProcessingJob" WHERE "status"='RUNNING' AND "leaseExpiresAt"<=CURRENT_TIMESTAMP FOR UPDATE SKIP LOCKED`);
+    const jobs = await client.query<{ id: string; runId: string; attemptCount: number; maxAttempts: number; cancelRequestedAt: Date | null }>(`SELECT "id","runId","attemptCount","maxAttempts","cancelRequestedAt" FROM "ProcessingJob" WHERE "status"='RUNNING' AND "leaseExpiresAt"<=CURRENT_TIMESTAMP FOR UPDATE SKIP LOCKED`);
     for (const job of jobs.rows) {
-      const exhausted = hasExhaustedAttempts(job.attemptCount, job.maxAttempts); const status = exhausted ? "FAILED" : "RETRYABLE"; const delay = exhausted ? 0 : computeRetryDelaySeconds(job.attemptCount, policy, () => 0);
-      await client.query(`UPDATE "ProcessingJob" SET "status"=$1::"ProcessingJobStatus","nextAttemptAt"=CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second'),"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$3,"lastErrorMessage"=$4,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$5`, [status, delay, exhausted ? "JOB_ATTEMPTS_EXHAUSTED" : "WORKER_LEASE_EXPIRED", exhausted ? "The job exceeded its attempt limit." : "The worker lease expired before completion.", job.id]);
-      await client.query(`UPDATE "ProcessingRun" SET "status"=$1::"ProcessingRunStatus","errorCode"=$2,"errorMessage"=$3,"completedAt"=CASE WHEN $1='FAILED' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE "id"=$4`, [status, exhausted ? "JOB_ATTEMPTS_EXHAUSTED" : "WORKER_LEASE_EXPIRED", exhausted ? "The job exceeded its attempt limit." : "The worker lease expired before completion.", job.runId]);
+      const cancelled = job.cancelRequestedAt !== null;
+      const exhausted = hasExhaustedAttempts(job.attemptCount, job.maxAttempts);
+      const status = cancelled ? "CANCELLED" : exhausted ? "FAILED" : "RETRYABLE";
+      const delay = cancelled || exhausted ? 0 : computeRetryDelaySeconds(job.attemptCount, policy, () => 0);
+      const code = cancelled ? "JOB_CANCELLED" : exhausted ? "JOB_ATTEMPTS_EXHAUSTED" : "WORKER_LEASE_EXPIRED";
+      const message = cancelled ? "The job was cancelled while its worker lease expired." : exhausted ? "The job exceeded its attempt limit." : "The worker lease expired before completion.";
+      await client.query(`UPDATE "ProcessingJob" SET "status"=$1::"ProcessingJobStatus","nextAttemptAt"=CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second'),"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$3,"lastErrorMessage"=$4,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$5`, [status, delay, code, message, job.id]);
+      await client.query(`UPDATE "ProcessingRun" SET "status"=$1::"ProcessingRunStatus","errorCode"=CASE WHEN $1='CANCELLED' THEN NULL ELSE $2 END,"errorMessage"=CASE WHEN $1='CANCELLED' THEN NULL ELSE $3 END,"completedAt"=CASE WHEN $1 IN ('FAILED','CANCELLED') THEN CURRENT_TIMESTAMP ELSE NULL END WHERE "id"=$4`, [status, code, message, job.runId]);
     }
     await client.query("COMMIT"); return jobs.rowCount ?? 0;
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
@@ -111,12 +133,14 @@ export async function getQueueHealth(pool: Pool): Promise<{ dueJobs: number; exp
   return result.rows[0];
 }
 
-export async function getJobRunContext(pool: Pool, runId: string): Promise<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; maxCommits: number } | null> {
-  const result = await pool.query<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; maxCommits: number }>(
-    `SELECT r."repositoryId", repo."owner", repo."name", r."headSha", r."defaultBranch", r."maxCommitLimit" AS "maxCommits" FROM "ProcessingRun" r JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE r."id"=$1`,
+export async function getJobRunContext(pool: Pool, runId: string): Promise<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string; maxCommits: number; expectedCommitCount: number } | null> {
+  const result = await pool.query<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string | null; maxCommits: number; expectedCommitCount: number | null }>(
+    `SELECT r."repositoryId", repo."owner", repo."name", r."headSha", r."defaultBranch", r."selectedAppRoot", r."maxCommitLimit" AS "maxCommits", r."expectedCommitCount" FROM "ProcessingRun" r JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE r."id"=$1`,
     [runId],
   );
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  if (!row || !row.selectedAppRoot || row.expectedCommitCount === null) return null;
+  return { ...row, selectedAppRoot: row.selectedAppRoot, expectedCommitCount: row.expectedCommitCount };
 }
 
 export async function completeJob(pool: Pool, job: ClaimedJob): Promise<boolean> {
@@ -124,7 +148,7 @@ export async function completeJob(pool: Pool, job: ClaimedJob): Promise<boolean>
   try {
     await client.query("BEGIN");
     const jobResult = await client.query(
-      `UPDATE "ProcessingJob" SET "status"='SUCCEEDED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "runId"=$2 AND "status"='RUNNING' AND "leaseOwner"=$3 AND "leaseGeneration"=$4 AND "leaseExpiresAt">CURRENT_TIMESTAMP RETURNING "runId"`,
+      `UPDATE "ProcessingJob" SET "status"='SUCCEEDED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "runId"=$2 AND "status"='RUNNING' AND "leaseOwner"=$3 AND "leaseGeneration"=$4 AND "leaseExpiresAt">CURRENT_TIMESTAMP AND "cancelRequestedAt" IS NULL AND EXISTS (SELECT 1 FROM "ProcessingRun" r WHERE r."id"=$2 AND r."status"='RUNNING' AND r."currentStep"='ACTIVATE_RUN') RETURNING "runId"`,
       [job.jobId, job.runId, job.workerId, job.leaseGeneration],
     );
     if (jobResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
@@ -139,7 +163,7 @@ export async function failJob(pool: Pool, job: ClaimedJob, code: string, message
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const jobResult = await client.query(`UPDATE "ProcessingJob" SET "status"='FAILED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$1,"lastErrorMessage"=$2,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$3 AND "runId"=$4 AND "status"='RUNNING' AND "leaseOwner"=$5 AND "leaseGeneration"=$6 RETURNING "runId"`, [code, message, job.jobId, job.runId, job.workerId, job.leaseGeneration]);
+    const jobResult = await client.query(`UPDATE "ProcessingJob" SET "status"='FAILED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$1,"lastErrorMessage"=$2,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$3 AND "runId"=$4 AND "status"='RUNNING' AND "leaseOwner"=$5 AND "leaseGeneration"=$6 AND "leaseExpiresAt">CURRENT_TIMESTAMP RETURNING "runId"`, [code, message, job.jobId, job.runId, job.workerId, job.leaseGeneration]);
     if (jobResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
     await client.query(`UPDATE "ProcessingRun" SET "status"='FAILED',"errorCode"=$1,"errorMessage"=$2,"completedAt"=CURRENT_TIMESTAMP WHERE "id"=$3`, [code, message, job.runId]);
     await client.query("COMMIT");
@@ -151,7 +175,7 @@ export async function markRateLimited(pool: Pool, job: ClaimedJob, resetAt: Date
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const jobResult = await client.query(`UPDATE "ProcessingJob" SET "status"='WAITING_RATE_LIMIT',"nextAttemptAt"=$1,"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$2,"lastErrorMessage"=$3,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$4 AND "runId"=$5 AND "status"='RUNNING' AND "leaseOwner"=$6 AND "leaseGeneration"=$7 RETURNING "runId"`, [resetAt, code, message, job.jobId, job.runId, job.workerId, job.leaseGeneration]);
+    const jobResult = await client.query(`UPDATE "ProcessingJob" SET "status"='WAITING_RATE_LIMIT',"nextAttemptAt"=$1,"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=$2,"lastErrorMessage"=$3,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$4 AND "runId"=$5 AND "status"='RUNNING' AND "leaseOwner"=$6 AND "leaseGeneration"=$7 AND "leaseExpiresAt">CURRENT_TIMESTAMP RETURNING "runId"`, [resetAt, code, message, job.jobId, job.runId, job.workerId, job.leaseGeneration]);
     if (jobResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
     await client.query(`UPDATE "ProcessingRun" SET "status"='WAITING_RATE_LIMIT',"errorCode"=$1,"errorMessage"=$2 WHERE "id"=$3`, [code, message, job.runId]);
     await client.query("COMMIT");

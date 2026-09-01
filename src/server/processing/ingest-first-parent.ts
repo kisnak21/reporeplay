@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { GitHubCommitDetail } from "@/server/github/source";
-import { traverseFirstParent } from "@/server/processing/first-parent";
+import { traverseFirstParent, type FirstParentCommit } from "@/server/processing/first-parent";
 import type { GitHubRepositorySource } from "@/server/github/source";
 import type { CheckpointInput, CommitInput } from "@/server/jobs/staged-repository";
 import { RepoReplayError } from "@/server/github/errors";
@@ -15,6 +15,7 @@ export interface IngestFirstParentOptions {
   name: string;
   headSha: string;
   maxCommits: number;
+  expectedCommitCount: number;
   batchSize?: number;
 }
 
@@ -47,9 +48,12 @@ function toCommitInput(runId: string, commit: GitHubCommitDetail & { firstParent
   };
 }
 
-export async function ingestFirstParentHistory(options: IngestFirstParentOptions): Promise<{ rootSha: string; count: number }> {
-  const { source, pool, job, owner, name, headSha, maxCommits, batchSize = 20 } = options;
+export async function ingestFirstParentHistory(options: IngestFirstParentOptions): Promise<{ rootSha: string; count: number; commits: FirstParentCommit[] }> {
+  const { source, pool, job, owner, name, headSha, maxCommits, expectedCommitCount, batchSize = 20 } = options;
   const chain = await traverseFirstParent(source, owner, name, headSha, maxCommits);
+  if (chain.commits.length !== expectedCommitCount) {
+    throw new RepoReplayError("PROCESSING_FAILED", "The first-parent history changed after preflight.", { expected: expectedCommitCount, actual: chain.commits.length, headSha });
+  }
   const commits = chain.commits.map((commit) => toCommitInput(job.runId, commit));
   for (let index = 0; index < commits.length; index += batchSize) {
     const batch = commits.slice(index, index + batchSize);
@@ -58,5 +62,5 @@ export async function ingestFirstParentHistory(options: IngestFirstParentOptions
     const written = await writeCheckpointedCommitBatch(pool, checkpoint, batch);
     if (!written) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist commit batch: lease lost.", { sequence: lastSequence });
   }
-  return { rootSha: chain.rootSha, count: chain.commits.length };
+  return { rootSha: chain.rootSha, count: chain.commits.length, commits: chain.commits };
 }

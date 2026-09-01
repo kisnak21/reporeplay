@@ -1,12 +1,16 @@
 import type { Pool, PoolClient } from "pg";
 import { RepoReplayError } from "@/server/github/errors";
+import type { DependencyDetection, DetectorWarning, RouteDetection } from "@/server/processing/detector-types";
 
-export interface CheckpointInput {
+export interface JobLease {
   jobId: string;
   runId: string;
   repositoryId: string;
   workerId: string;
   leaseGeneration: number;
+}
+
+export interface CheckpointInput extends JobLease {
   step: string;
   sequence: number;
 }
@@ -33,6 +37,23 @@ export interface CommitInput {
 export async function checkpointRun(client: PoolClient, input: CheckpointInput): Promise<boolean> {
   const result = await client.query(`UPDATE "ProcessingRun" r SET "currentStep"=$1::"ProcessingStep","checkpointSequence"=$2,"processedCommitCount"=$2+1,"checkpointUpdatedAt"=CURRENT_TIMESTAMP WHERE "id"=$3 AND "repositoryId"=$4 AND EXISTS (SELECT 1 FROM "ProcessingJob" j JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$5 AND j."runId"=r."id" AND j."status"='RUNNING' AND j."leaseOwner"=$6 AND j."leaseGeneration"=$7 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL)`, [input.step, input.sequence, input.runId, input.repositoryId, input.jobId, input.workerId, input.leaseGeneration]);
   return result.rowCount === 1;
+}
+
+export async function persistIngestionMetadata(pool: Pool, job: JobLease, metadata: { rootSha: string; expectedCommitCount: number }): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (!(await assertLease(client, job))) { await client.query("ROLLBACK"); return false; }
+    const result = await client.query(`UPDATE "ProcessingRun" r SET "rootSha"=$1,"expectedCommitCount"=$2,"checkpointUpdatedAt"=CURRENT_TIMESTAMP WHERE "id"=$3 AND EXISTS (SELECT 1 FROM "ProcessingJob" j JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$4 AND j."runId"=r."id" AND j."status"='RUNNING' AND j."leaseOwner"=$5 AND j."leaseGeneration"=$6 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL)`, [metadata.rootSha, metadata.expectedCommitCount, job.runId, job.jobId, job.workerId, job.leaseGeneration]);
+    if (result.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function writeCommitBatch(client: PoolClient, job: CheckpointInput, commits: CommitInput[]): Promise<boolean> {
@@ -85,7 +106,70 @@ export async function writeCategories(client: PoolClient, job: CheckpointInput, 
   return true;
 }
 
-export async function assertLease(client: PoolClient, job: CheckpointInput): Promise<boolean> {
+export interface DetectorOutput {
+  dependencies?: DependencyDetection[];
+  routes?: RouteDetection[];
+  warnings: DetectorWarning[];
+}
+
+export interface PersistDetectorOutputInput extends JobLease {
+  step: "DETECT_DEPENDENCIES" | "DETECT_ROUTES";
+  output: DetectorOutput;
+}
+
+export async function persistDetectorOutput(pool: Pool, input: PersistDetectorOutputInput): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (!(await assertLease(client, input))) { await client.query("ROLLBACK"); return false; }
+    const commits = await client.query<{ id: string; sha: string }>(`SELECT "id","sha" FROM "RunCommit" WHERE "runId"=$1`, [input.runId]);
+    const commitIds = new Map(commits.rows.map((commit) => [commit.sha, commit.id]));
+
+    for (const change of input.output.dependencies ?? []) {
+      const runCommitId = commitIds.get(change.commitSha);
+      if (!runCommitId) throw new RepoReplayError("PROCESSING_FAILED", "Dependency event references an unknown commit.", { sha: change.commitSha });
+      await client.query(
+        `INSERT INTO "DependencyChange"("id","runId","runCommitId","manifestPath","packageName","dependencyGroup","changeType","previousValue","currentValue") VALUES(gen_random_uuid(),$1,$2,$3,$4,$5::"DependencyGroup",$6::"DependencyChangeType",$7,$8) ON CONFLICT DO NOTHING`,
+        [input.runId, runCommitId, change.manifestPath, change.packageName, change.dependencyGroup, change.changeType, change.previousValue, change.currentValue],
+      );
+    }
+
+    for (const change of input.output.routes ?? []) {
+      const runCommitId = commitIds.get(change.commitSha);
+      if (!runCommitId) throw new RepoReplayError("PROCESSING_FAILED", "Route event references an unknown commit.", { sha: change.commitSha });
+      await client.query(
+        `INSERT INTO "RouteChange"("id","runId","runCommitId","router","route","sourcePath","routeType","changeType") VALUES(gen_random_uuid(),$1,$2,$3::"RouteRouter",$4,$5,$6::"RouteType",$7::"RouteChangeType") ON CONFLICT DO NOTHING`,
+        [input.runId, runCommitId, change.router, change.route, change.sourcePath, change.routeType, change.changeType],
+      );
+    }
+
+    for (const warning of input.output.warnings) {
+      const runCommitId = warning.commitSha ? commitIds.get(warning.commitSha) ?? null : null;
+      if (warning.commitSha && !runCommitId) throw new RepoReplayError("PROCESSING_FAILED", "Detector warning references an unknown commit.", { sha: warning.commitSha });
+      await client.query(
+        `INSERT INTO "ProcessingWarning"("id","runId","runCommitId","code","detector","path","message","detectorVersion") VALUES(md5($1::text || '|' || COALESCE($2::text,'') || '|' || $3 || '|' || COALESCE($5,'') || '|' || $6 || '|' || COALESCE($7,''))::uuid,$1::uuid,$2::uuid,$3,$4::"WarningDetector",$5,$6,$7) ON CONFLICT DO NOTHING`,
+        [input.runId, runCommitId, warning.code, warning.detector, warning.path, warning.message, warning.detectorVersion],
+      );
+    }
+
+    const advanced = await advanceRunStep(client, input, input.step);
+    if (!advanced) { await client.query("ROLLBACK"); return false; }
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function advanceRunStep(client: PoolClient, job: JobLease, step: string): Promise<boolean> {
+  const result = await client.query(`UPDATE "ProcessingRun" r SET "currentStep"=$1::"ProcessingStep","checkpointUpdatedAt"=CURRENT_TIMESTAMP WHERE "id"=$2 AND EXISTS (SELECT 1 FROM "ProcessingJob" j JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$3 AND j."runId"=r."id" AND j."status"='RUNNING' AND j."leaseOwner"=$4 AND j."leaseGeneration"=$5 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL)`, [step, job.runId, job.jobId, job.workerId, job.leaseGeneration]);
+  return result.rowCount === 1;
+}
+
+export async function assertLease(client: PoolClient, job: JobLease): Promise<boolean> {
   const result = await client.query(`SELECT 1 FROM "ProcessingJob" j JOIN "ProcessingRun" r ON r."id"=j."runId" JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$1 AND j."runId"=$2 AND r."repositoryId"=$3 AND j."status"='RUNNING' AND j."leaseOwner"=$4 AND j."leaseGeneration"=$5 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL`, [job.jobId, job.runId, job.repositoryId, job.workerId, job.leaseGeneration]);
   return result.rowCount === 1;
 }

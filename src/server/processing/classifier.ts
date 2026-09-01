@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { assertLease, type CheckpointInput } from "@/server/jobs/staged-repository";
+import { advanceRunStep, assertLease, type CheckpointInput } from "@/server/jobs/staged-repository";
 
 export type CommitCategoryValue = "FEATURE" | "FIX" | "REFACTOR" | "DOCS" | "TEST" | "STYLE" | "BUILD" | "CHORE" | "PERFORMANCE" | "CI" | "REVERT" | "UNCATEGORIZED";
 export type CategorySource = "CONVENTIONAL_COMMIT" | "NONE";
@@ -48,7 +48,7 @@ export async function persistCategoriesForRun(pool: Pool, job: CheckpointInput):
         [row.runId, row.id, cls.category, cls.source, cls.matchedType],
       );
     }
-    await client.query(`UPDATE "ProcessingRun" SET "currentStep"='CLASSIFY_COMMITS',"checkpointSequence"=(SELECT COALESCE(MAX("sequence"),-1) FROM "RunCommit" WHERE "runId"=$1) WHERE "id"=$1`, [job.runId]);
+    if (!(await advanceRunStep(client, job, "CLASSIFY_COMMITS"))) throw new Error("Lease lost during classification checkpoint");
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

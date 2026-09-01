@@ -1,15 +1,25 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseEnvironment } from "../src/lib/environment";
 import { createDatabasePool } from "../src/server/db/pool";
-import { claimNextDueJob, completeJob, failJob, getJobRunContext, markRateLimited, recordWorkerHeartbeat, scheduleRetry, type ClaimedJob } from "../src/server/jobs/repository";
+import { claimNextDueJob, completeJob, failJob, finalizeCancellation, getJobRunContext, markRateLimited, recordWorkerHeartbeat, scheduleRetry, type ClaimedJob } from "../src/server/jobs/repository";
 import type { RetryPolicy } from "../src/server/jobs/retry-policy";
 import { createGitHubSourceFromEnvironment } from "../src/server/github/client";
 import { RepoReplayError } from "../src/server/github/errors";
 import { ingestFirstParentHistory } from "../src/server/processing/ingest-first-parent";
 import { persistCategoriesForRun } from "../src/server/processing/classifier";
-import { startJobHeartbeat } from "./heartbeat";
+import { detectDependenciesForHistory, detectRoutesForHistory } from "../src/server/processing/detectors";
+import { persistDetectorOutput, persistIngestionMetadata } from "../src/server/jobs/staged-repository";
+import { validateRun } from "../src/server/processing/validate-run";
+import { startJobHeartbeat, type HeartbeatController } from "./heartbeat";
 import { createWorkerId } from "./identity";
 import { startSweeper } from "./sweeper";
+
+async function raceWithHeartbeat<T>(operation: Promise<T>, heartbeat: HeartbeatController): Promise<T> {
+  const leaseFailure = heartbeat.lostLease.then(() => {
+    throw new Error("Job lease was lost.");
+  });
+  return Promise.race([operation, leaseFailure]);
+}
 
 async function startWorker(): Promise<void> {
   const environment = parseEnvironment(process.env);
@@ -50,17 +60,33 @@ async function startWorker(): Promise<void> {
       const context = await getJobRunContext(pool, job.runId);
       if (!context) throw new RepoReplayError("PROCESSING_FAILED", "Run context not found.");
       const source = createGitHubSourceFromEnvironment(environment);
-      await Promise.race([
-        ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits }),
-        heartbeat.lostLease,
-      ]);
-      await Promise.race([
+      const ingestion = await raceWithHeartbeat(
+        ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits, expectedCommitCount: context.expectedCommitCount }),
+        heartbeat,
+      );
+      const metadataPersisted = await persistIngestionMetadata(pool, job, { rootSha: ingestion.rootSha, expectedCommitCount: ingestion.count });
+      if (!metadataPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist ingestion metadata: lease lost.");
+
+      await raceWithHeartbeat(
         persistCategoriesForRun(pool, { jobId: job.jobId, runId: job.runId, repositoryId: job.repositoryId, workerId: job.workerId, leaseGeneration: job.leaseGeneration, step: "CLASSIFY_COMMITS", sequence: 0 }),
-        heartbeat.lostLease,
-      ]);
+        heartbeat,
+      );
+
+      const historyInput = { source, owner: context.owner, name: context.name, selectedAppRoot: context.selectedAppRoot, commits: ingestion.commits };
+      const dependencyOutput = await raceWithHeartbeat(detectDependenciesForHistory(historyInput), heartbeat);
+      const dependenciesPersisted = await persistDetectorOutput(pool, { ...job, step: "DETECT_DEPENDENCIES", output: { dependencies: dependencyOutput.changes, warnings: dependencyOutput.warnings } });
+      if (!dependenciesPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist dependency detection: lease lost.");
+
+      const routeOutput = await raceWithHeartbeat(detectRoutesForHistory(historyInput), heartbeat);
+      const routesPersisted = await persistDetectorOutput(pool, { ...job, step: "DETECT_ROUTES", output: routeOutput });
+      if (!routesPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist route detection: lease lost.");
+
+      const validated = await raceWithHeartbeat(validateRun(pool, job), heartbeat);
+      if (!validated) throw new RepoReplayError("PROCESSING_FAILED", "Failed to validate run: lease lost.");
       const completed = await completeJob(pool, job);
       if (!completed) throw new RepoReplayError("PROCESSING_FAILED", "Failed to complete job: lease lost.");
     } catch (error) {
+      if (await finalizeCancellation(pool, job)) return;
       if (error instanceof RepoReplayError) {
         if (error.code === "GITHUB_RATE_LIMITED") {
           const resetAt = error.details.resetAt ? new Date(String(error.details.resetAt)) : new Date(Date.now() + 60_000);

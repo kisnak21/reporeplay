@@ -67,9 +67,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ data: { repositoryId, runId: existing.rows[0].id, status: "QUEUED" } }, { status: 200 });
       }
       const runResult = await client.query<{ id: string }>(
-        `INSERT INTO "ProcessingRun"("id","repositoryId","kind","status","selectedAppRoot","defaultBranch","headSha","headFileCount","maxCommitLimit","maxHeadFileLimit","schemaVersion","classifierVersion","dependencyDetectorVersion","routeDetectorVersion","currentStep")
-         VALUES(gen_random_uuid(),$1,'IMPORT','QUEUED',$2,$3,$4,$5,$6,$7,'1','1','1','1','DISCOVER_HISTORY') RETURNING "id"`,
-        [repositoryId, selectedAppRoot, preflight.repository.defaultBranch, preflight.headSha, preflight.headFileCount, env.MAX_FIRST_PARENT_COMMITS, env.MAX_HEAD_FILES],
+        `INSERT INTO "ProcessingRun"("id","repositoryId","kind","status","selectedAppRoot","defaultBranch","headSha","expectedCommitCount","headFileCount","maxCommitLimit","maxHeadFileLimit","schemaVersion","classifierVersion","dependencyDetectorVersion","routeDetectorVersion","currentStep")
+         VALUES(gen_random_uuid(),$1,'IMPORT','QUEUED',$2,$3,$4,$5,$6,$7,$8,'1','1','1','1','DISCOVER_HISTORY') RETURNING "id"`,
+        [repositoryId, selectedAppRoot, preflight.repository.defaultBranch, preflight.headSha, preflight.firstParentCommitCount, preflight.headFileCount, env.MAX_FIRST_PARENT_COMMITS, env.MAX_HEAD_FILES],
       );
       const runId = runResult.rows[0].id;
       await client.query(`INSERT INTO "ProcessingJob"("id","runId","status","updatedAt") VALUES(gen_random_uuid(),$1,'QUEUED',CURRENT_TIMESTAMP)`, [runId]);
