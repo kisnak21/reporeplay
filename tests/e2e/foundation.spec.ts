@@ -1,6 +1,30 @@
 import { expect, test } from "@playwright/test";
 
 test("completes the fixture import flow", async ({ page }) => {
+  await page.route("**/api/repositories/preflight", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          repository: { externalId: "github-1842", fullName: "acme/ledger", defaultBranch: "main", headSha: "9d8e7f6" },
+          firstParentCommitCount: 184,
+          headFileCount: 3210,
+          appRootCandidates: [
+            { path: "apps/storefront", manifestPath: "apps/storefront/package.json", routeRoots: ["src/app"], routeFileCount: 14 },
+            { path: "apps/admin", manifestPath: "apps/admin/package.json", routeRoots: ["pages"], routeFileCount: 9 },
+          ],
+          limits: { maxFirstParentCommits: 500, maxHeadFiles: 25000 },
+          preflightToken: "fixture-preflight-token",
+        },
+      }),
+    });
+  });
+  await page.route("**/api/repositories", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ data: { repositoryId: "demo", runId: "run-demo", status: "QUEUED" } }) });
+  });
+
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Trace mainline change to source." })).toBeVisible();
 
