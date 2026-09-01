@@ -45,6 +45,9 @@ test("completes the fixture import flow", async ({ page }) => {
 });
 
 test("validates repository URLs", async ({ page }) => {
+  await page.route("**/api/repositories/preflight", async (route) => {
+    await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: { code: "INVALID_REPOSITORY_URL", message: "Enter a public GitHub repository URL in the form github.com/owner/repository." } }) });
+  });
   await page.goto("/");
   await page.getByLabel("Public GitHub repository URL").fill("https://example.com/not-github");
   await page.getByRole("button", { name: "Run preflight" }).click();
