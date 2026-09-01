@@ -32,12 +32,15 @@ export interface CoverageWarning {
 
 export interface ProcessingRunView {
   id: string;
+  kind?: "IMPORT" | "REFRESH";
   status: RunStatus;
   step: ProcessingStep;
   processedCommits: number;
-  expectedCommits: number;
+  expectedCommits: number | null;
   attemptCount: number;
   nextAttemptAt: string | null;
+  warnings?: CoverageWarning[];
+  error?: { code: string; message: string | null } | null;
 }
 
 export interface RepositoryDetail {
@@ -89,4 +92,42 @@ export interface CommitEvidence extends CommitSummary {
   externalUrl: string;
   categorySource: "CONVENTIONAL_COMMIT" | "NONE";
   warnings: CoverageWarning[];
+}
+
+export interface TimelineEventSummary {
+  routesAdded: number;
+  routesRemoved: number;
+  dependenciesAdded: number;
+  dependenciesRemoved: number;
+  dependenciesUpdated: number;
+}
+
+export interface TimelineItem {
+  sha: string;
+  shortSha: string;
+  message: string;
+  authorName: string | null;
+  committedAt: string;
+  statistics: DiffStatistics;
+  category: CommitCategory;
+  eventSummary: TimelineEventSummary;
+  warnings: CoverageWarning[];
+}
+
+export interface CommitDetail {
+  snapshot: { runId: string };
+  sha: string;
+  shortSha: string;
+  firstParentSha: string | null;
+  message: string;
+  authorName: string | null;
+  authoredAt: string | null;
+  committedAt: string;
+  statistics: DiffStatistics;
+  category: { value: CommitCategory; source: "CONVENTIONAL_COMMIT" | "NONE" };
+  files: Array<{ path: string; previousPath: string | null; status: ChangedFile["status"]; additions: number; deletions: number; changes: number }>;
+  dependencyChanges: Array<{ manifestPath: string; packageName: string; dependencyGroup: string; changeType: DependencyChange["type"]; previousValue: string | null; currentValue: string | null }>;
+  routeChanges: Array<{ router: string; route: string; sourcePath: string; routeType: string; changeType: RouteChange["type"] }>;
+  warnings: CoverageWarning[];
+  externalUrl: string;
 }

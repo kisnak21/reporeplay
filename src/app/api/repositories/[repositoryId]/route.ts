@@ -24,7 +24,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ rep
         (SELECT COUNT(*)::int FROM (SELECT DISTINCT ON (dc."manifestPath",dc."packageName",dc."dependencyGroup") dc."changeType"
           FROM "DependencyChange" dc JOIN "RunCommit" c ON c."id"=dc."runCommitId" AND c."runId"=dc."runId"
           WHERE dc."runId"=$1 ORDER BY dc."manifestPath",dc."packageName",dc."dependencyGroup",c."sequence" DESC,dc."id" DESC) current_dependencies
-          WHERE "changeType" <> 'REMOVED'),
+          WHERE "changeType" <> 'REMOVED') AS "dependencyCount",
         (SELECT COUNT(*)::int FROM "ProcessingWarning" WHERE "runId"=$1) AS "warningCount"
         ,(SELECT COALESCE(json_agg(json_build_object('code',w."code",'detector',w."detector",'path',w."path",'message',w."message",'detectorVersion',w."detectorVersion") ORDER BY w."createdAt",w."id"),'[]'::json) FROM "ProcessingWarning" w WHERE w."runId"=$1) AS "warnings"
         FROM "ProcessingRun" WHERE "id"=$1`,

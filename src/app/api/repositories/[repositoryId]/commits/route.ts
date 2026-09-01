@@ -45,7 +45,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ repo
       (SELECT COUNT(*)::int FROM "DependencyChange" dc WHERE dc."runId"=c."runId" AND dc."runCommitId"=c."id" AND dc."changeType"='ADDED') AS "dependenciesAdded",
       (SELECT COUNT(*)::int FROM "DependencyChange" dc WHERE dc."runId"=c."runId" AND dc."runCommitId"=c."id" AND dc."changeType"='REMOVED') AS "dependenciesRemoved",
       (SELECT COUNT(*)::int FROM "DependencyChange" dc WHERE dc."runId"=c."runId" AND dc."runCommitId"=c."id" AND dc."changeType"='UPDATED') AS "dependenciesUpdated",
-      COALESCE((SELECT json_agg(json_build_object('code',w."code",'path',w."path",'message',w."message") ORDER BY w."createdAt",w."id") FROM "ProcessingWarning" w WHERE w."runId"=c."runId" AND w."runCommitId"=c."id"),'[]'::json) AS "warnings"
+      COALESCE((SELECT json_agg(json_build_object('code',w."code",'path',w."path",'message',w."message",'detectorVersion',w."detectorVersion") ORDER BY w."createdAt",w."id") FROM "ProcessingWarning" w WHERE w."runId"=c."runId" AND w."runCommitId"=c."id"),'[]'::json) AS "warnings"
       FROM "RunCommit" c LEFT JOIN "CommitCategory" cat ON cat."runId"=c."runId" AND cat."runCommitId"=c."id" WHERE ${where} ORDER BY c."sequence" DESC LIMIT $${idx}`,
     [...values, limit + 1],
   );

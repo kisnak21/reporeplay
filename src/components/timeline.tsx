@@ -1,8 +1,65 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo,useState } from "react";
-import type { CommitEvidence } from "@/server/contracts/api";
+import { useMemo, useState } from "react";
+import type { CommitEvidence, DependencyChange, TimelineEventSummary, TimelineItem } from "@/server/contracts/api";
 import { ui } from "@/lib/ui";
 
-export function Timeline({commits}:{commits:CommitEvidence[]}){const[query,setQuery]=useState("");const[event,setEvent]=useState("ALL");const visible=useMemo(()=>commits.filter((commit)=>commit.message.toLowerCase().includes(query.toLowerCase())&&(event==="ALL"||(event==="ROUTE"?commit.routeChanges.length:commit.dependencyChanges.length))),[commits,event,query]);return <div className="mt-6 grid grid-cols-[15rem_minmax(0,1fr)] gap-4 max-[800px]:grid-cols-1"><aside className="sticky top-4 self-start border border-line bg-panel p-4 max-[800px]:static" aria-label="Timeline filters"><h2 className="font-mono text-base">Filter record</h2><label className="mt-4 block text-sm font-semibold text-muted">Keyword<input className={`${ui.input} mt-1`} onChange={(e)=>setQuery(e.target.value)} placeholder="authentication" type="search" value={query}/></label><label className="mt-4 block text-sm font-semibold text-muted">Evidence<select className={`${ui.input} mt-1`} onChange={(e)=>setEvent(e.target.value)} value={event}><option value="ALL">All evidence</option><option value="ROUTE">Route</option><option value="DEPENDENCY">Dependency</option></select></label></aside><section aria-labelledby="timeline-title"><p className={ui.eyebrow}>timeline / newest first</p><h2 className={ui.sectionTitle} id="timeline-title">Observable transitions</h2>{visible.length?<div className="mt-3 border border-line bg-panel">{visible.map((commit)=><article className="grid grid-cols-[7rem_minmax(0,1fr)_7rem] gap-4 border-b border-line p-4 last:border-b-0 max-[560px]:grid-cols-1" key={commit.sha}><div className="font-mono text-xs leading-loose text-muted"><code>{commit.shortSha}</code><br/>{new Date(commit.committedAt).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})}</div><div><h3><Link className="font-mono font-semibold" href={`/repositories/demo/commits/${commit.shortSha}`}>{commit.message}</Link></h3><span className="mt-2 inline-block font-mono text-[.68rem] uppercase text-cyan">{commit.category.toLowerCase()}</span><ul className="my-3 list-none p-0 font-mono text-xs leading-loose">{commit.routeChanges.map((change)=><li key={change.route}><span className={change.type==="ADDED"?ui.positive:ui.negative}>{change.type==="ADDED"?"+ route":"- route"}</span> <code>{change.route}</code></li>)}{commit.dependencyChanges.map((change)=><li key={`${change.type}-${change.packageName}`}><span className={change.type==="ADDED"?ui.positive:change.type==="REMOVED"?ui.negative:ui.signal}>{change.type==="ADDED"?"+ dependency":change.type==="REMOVED"?"- dependency":"~ dependency"}</span> <code>{change.packageName}</code> {change.previousValue&&change.currentValue?`${change.previousValue} to ${change.currentValue}`:change.currentValue??change.previousValue}</li>)}</ul><details className="mt-2"><summary className="flex min-h-11 w-fit cursor-pointer items-center font-mono text-xs text-muted">Show {commit.files.length} changed files</summary><ul className="m-0 list-none break-words border-t border-soft py-3 font-mono text-xs leading-loose text-muted">{commit.files.map((file)=><li key={file.path}>{file.status} · {file.path}</li>)}</ul></details></div><div className="text-right font-mono text-xs leading-loose text-muted max-[560px]:text-left">{commit.statistics.changedFiles} files<br/><span className={ui.positive}>+{commit.statistics.additions}</span> <span className={ui.negative}>-{commit.statistics.deletions}</span></div></article>)}</div>:<div className="mt-3 flex items-center justify-between gap-4 border border-line bg-panel p-5 max-[560px]:flex-col max-[560px]:items-stretch"><strong>No commits match these filters.</strong><button className={ui.button} onClick={()=>{setQuery("");setEvent("ALL")}} type="button">Clear filters</button></div>}</section></div>}
+type TimelineCommit = CommitEvidence | TimelineItem;
+
+interface TimelineProps {
+  commits: TimelineCommit[];
+  repositoryId?: string;
+}
+
+function getSummary(commit: TimelineCommit): TimelineEventSummary {
+  if ("eventSummary" in commit) return commit.eventSummary;
+  return {
+    routesAdded: commit.routeChanges.filter((change) => change.type === "ADDED").length,
+    routesRemoved: commit.routeChanges.filter((change) => change.type === "REMOVED").length,
+    dependenciesAdded: commit.dependencyChanges.filter((change) => change.type === "ADDED").length,
+    dependenciesRemoved: commit.dependencyChanges.filter((change) => change.type === "REMOVED").length,
+    dependenciesUpdated: commit.dependencyChanges.filter((change) => change.type === "UPDATED").length,
+  };
+}
+
+function getDependencyChanges(commit: TimelineCommit): DependencyChange[] {
+  if ("dependencyChanges" in commit) return commit.dependencyChanges;
+  return [];
+}
+
+function getRouteChanges(commit: TimelineCommit): CommitEvidence["routeChanges"] {
+  if ("routeChanges" in commit) return commit.routeChanges;
+  return [];
+}
+
+function hasRouteEvidence(commit: TimelineCommit): boolean {
+  const summary = getSummary(commit);
+  return summary.routesAdded + summary.routesRemoved > 0;
+}
+
+function hasDependencyEvidence(commit: TimelineCommit): boolean {
+  const summary = getSummary(commit);
+  return summary.dependenciesAdded + summary.dependenciesRemoved + summary.dependenciesUpdated > 0;
+}
+
+function EventSummary({ summary, dependencies, routes }: { summary: TimelineEventSummary; dependencies: DependencyChange[]; routes: CommitEvidence["routeChanges"] }) {
+  const hasDetailedChanges = dependencies.length > 0 || routes.length > 0;
+  return <ul className="my-3 list-none p-0 font-mono text-xs leading-loose">
+    {routes.map((change) => <li key={`${change.type}-${change.route}`}><span className={change.type === "ADDED" ? ui.positive : ui.negative}>{change.type === "ADDED" ? "+ route" : "- route"}</span> <code>{change.route}</code></li>)}
+    {hasDetailedChanges ? dependencies.map((change) => <li key={`${change.type}-${change.packageName}`}><span className={change.type === "ADDED" ? ui.positive : change.type === "REMOVED" ? ui.negative : ui.signal}>{change.type === "ADDED" ? "+ dependency" : change.type === "REMOVED" ? "- dependency" : "~ dependency"}</span> <code>{change.packageName}</code> {change.previousValue && change.currentValue ? `${change.previousValue} to ${change.currentValue}` : change.currentValue ?? change.previousValue}</li>) : null}
+    {!hasDetailedChanges && summary.routesAdded > 0 ? <li><span className={ui.positive}>+ route changes</span> <strong>{summary.routesAdded}</strong></li> : null}
+    {!hasDetailedChanges && summary.routesRemoved > 0 ? <li><span className={ui.negative}>- route changes</span> <strong>{summary.routesRemoved}</strong></li> : null}
+    {!hasDetailedChanges && summary.dependenciesAdded > 0 ? <li><span className={ui.positive}>+ dependency changes</span> <strong>{summary.dependenciesAdded}</strong></li> : null}
+    {!hasDetailedChanges && summary.dependenciesRemoved > 0 ? <li><span className={ui.negative}>- dependency changes</span> <strong>{summary.dependenciesRemoved}</strong></li> : null}
+    {!hasDetailedChanges && summary.dependenciesUpdated > 0 ? <li><span className={ui.signal}>~ dependency updates</span> <strong>{summary.dependenciesUpdated}</strong></li> : null}
+  </ul>;
+}
+
+export function Timeline({ commits, repositoryId = "demo" }: TimelineProps) {
+  const [query, setQuery] = useState("");
+  const [event, setEvent] = useState("ALL");
+  const visible = useMemo(() => commits.filter((commit) => commit.message.toLowerCase().includes(query.toLowerCase()) && (event === "ALL" || (event === "ROUTE" ? hasRouteEvidence(commit) : hasDependencyEvidence(commit)))), [commits, event, query]);
+
+  return <div className="mt-6 grid grid-cols-[15rem_minmax(0,1fr)] gap-4 max-[800px]:grid-cols-1"><aside className="sticky top-4 self-start border border-line bg-panel p-4 max-[800px]:static" aria-label="Timeline filters"><h2 className="font-mono text-base">Filter record</h2><label className="mt-4 block text-sm font-semibold text-muted">Keyword<input className={`${ui.input} mt-1`} onChange={(e) => setQuery(e.target.value)} placeholder="authentication" type="search" value={query} /></label><label className="mt-4 block text-sm font-semibold text-muted">Evidence<select className={`${ui.input} mt-1`} onChange={(e) => setEvent(e.target.value)} value={event}><option value="ALL">All evidence</option><option value="ROUTE">Route</option><option value="DEPENDENCY">Dependency</option></select></label></aside><section aria-labelledby="timeline-title"><p className={ui.eyebrow}>timeline / newest first</p><h2 className={ui.sectionTitle} id="timeline-title">Observable transitions</h2>{visible.length ? <div className="mt-3 border border-line bg-panel">{visible.map((commit) => { const summary = getSummary(commit); return <article className="grid grid-cols-[7rem_minmax(0,1fr)_7rem] gap-4 border-b border-line p-4 last:border-b-0 max-[560px]:grid-cols-1" key={commit.sha}><div className="font-mono text-xs leading-loose text-muted"><code>{commit.shortSha}</code><br />{new Date(commit.committedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</div><div><h3><Link className="font-mono font-semibold" href={`/repositories/${repositoryId}/commits/${commit.shortSha}`}>{commit.message}</Link></h3><span className="mt-2 inline-block font-mono text-[.68rem] uppercase text-cyan">{commit.category.toLowerCase()}</span><EventSummary dependencies={getDependencyChanges(commit)} routes={getRouteChanges(commit)} summary={summary} />{"files" in commit ? <details className="mt-2"><summary className="flex min-h-11 w-fit cursor-pointer items-center font-mono text-xs text-muted">Show {commit.files.length} changed files</summary><ul className="m-0 list-none break-words border-t border-soft py-3 font-mono text-xs leading-loose text-muted">{commit.files.map((file) => <li key={file.path}>{file.status} · {file.path}</li>)}</ul></details> : null}</div><div className="text-right font-mono text-xs leading-loose text-muted max-[560px]:text-left">{commit.statistics.changedFiles} files<br /><span className={ui.positive}>+{commit.statistics.additions}</span> <span className={ui.negative}>-{commit.statistics.deletions}</span></div></article>; })}</div> : <div className="mt-3 flex items-center justify-between gap-4 border border-line bg-panel p-5 max-[560px]:flex-col max-[560px]:items-stretch"><strong>No commits match these filters.</strong><button className={ui.button} onClick={() => { setQuery(""); setEvent("ALL"); }} type="button">Clear filters</button></div>}</section></div>;
+}
