@@ -176,7 +176,7 @@ Every task is complete only when its acceptance test passes. Tests are built wit
 - [ ] Build app-root selector with evidence paths.
 - [ ] Build processing state UI for every documented status.
 - [ ] Add bounded polling and terminal-state stop.
-- [ ] Add retry and cancellation actions with feedback.
+- [x] Add retry and cancellation actions with feedback.
 - [ ] Add unsupported, oversized, truncated-source, rate-limit, and failure states.
 - [ ] Announce asynchronous status updates accessibly without moving focus.
 - [ ] Test keyboard, screen-reader names, errors, and mobile reflow.
@@ -217,7 +217,7 @@ Every task is complete only when its acceptance test passes. Tests are built wit
 - [ ] Implement manual refresh preflight.
 - [ ] Preserve the active snapshot during every refresh state.
 - [ ] Implement ambiguous-root refresh configuration.
-- [ ] Implement refresh retry and cancellation endpoints.
+- [x] Implement refresh retry and cancellation endpoints.
 - [ ] Implement failed-refresh messaging and retained-snapshot evidence.
 - [ ] Implement protected permanent deletion.
 - [ ] Invalidate leases before cascading deletion.

@@ -94,6 +94,47 @@ export async function requestCancellation(pool: Pool, jobId: string): Promise<"C
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 }
 
+export type RetryRunResult = "QUEUED" | "NOT_FOUND" | "NOT_RETRYABLE" | "RUN_ALREADY_ACTIVE";
+
+export async function retryFailedRun(pool: Pool, repositoryId: string, runId: string): Promise<RetryRunResult> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const repository = await client.query(`SELECT "id" FROM "Repository" WHERE "id"=$1 FOR UPDATE`, [repositoryId]);
+    if (!repository.rows[0]) { await client.query("ROLLBACK"); return "NOT_FOUND"; }
+
+    const runResult = await client.query<{ status: string; jobId: string }>(
+      `SELECT r."status"::text,j."id" AS "jobId" FROM "ProcessingRun" r JOIN "ProcessingJob" j ON j."runId"=r."id" WHERE r."id"=$1 AND r."repositoryId"=$2 FOR UPDATE OF r,j`,
+      [runId, repositoryId],
+    );
+    const run = runResult.rows[0];
+    if (!run) { await client.query("ROLLBACK"); return "NOT_FOUND"; }
+    if (run.status !== "FAILED") { await client.query("ROLLBACK"); return "NOT_RETRYABLE"; }
+
+    const activeRun = await client.query(
+      `SELECT "id" FROM "ProcessingRun" WHERE "repositoryId"=$1 AND "id"<>$2 AND "status" IN ('NEEDS_CONFIGURATION','QUEUED','RUNNING','WAITING_RATE_LIMIT','RETRYABLE') LIMIT 1`,
+      [repositoryId, runId],
+    );
+    if (activeRun.rows[0]) { await client.query("ROLLBACK"); return "RUN_ALREADY_ACTIVE"; }
+
+    await client.query(
+      `UPDATE "ProcessingJob" SET "status"='QUEUED',"attemptCount"=0,"nextAttemptAt"=CURRENT_TIMESTAMP,"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"cancelRequestedAt"=NULL,"lastErrorCode"=NULL,"lastErrorMessage"=NULL,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "runId"=$2 AND "status"='FAILED'`,
+      [run.jobId, runId],
+    );
+    await client.query(
+      `UPDATE "ProcessingRun" SET "status"='QUEUED',"currentStep"='DISCOVER_HISTORY',"fetchedCommitCount"=0,"processedCommitCount"=0,"checkpointSequence"=-1,"checkpointUpdatedAt"=NULL,"startedAt"=NULL,"completedAt"=NULL,"activatedAt"=NULL,"errorCode"=NULL,"errorMessage"=NULL WHERE "id"=$1 AND "repositoryId"=$2 AND "status"='FAILED'`,
+      [runId, repositoryId],
+    );
+    await client.query("COMMIT");
+    return "QUEUED";
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function finalizeCancellation(pool: Pool, job: ClaimedJob): Promise<boolean> {
   const client = await pool.connect();
   try {

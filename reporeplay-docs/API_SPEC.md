@@ -386,7 +386,9 @@ POST /api/repositories/:repositoryId/runs/:runId/retry
 POST /api/repositories/:repositoryId/runs/:runId/cancel
 ```
 
-Retry accepts only eligible terminal or retryable states and never creates duplicate output. Cancel is cooperative for running work and immediate for queued work.
+Retry accepts only `FAILED` runs. It locks the repository, run, and job in one transaction, resets the run and job errors, clears the old lease, preserves the same staged run data, and enqueues the same job with `202 Accepted`. A second concurrent retry cannot create another job. Cancel is cooperative for running work and immediate for queued work.
+
+Successful retry returns `{ data: { repositoryId, runId, status: "QUEUED" } }`. A missing run returns `404 RUN_NOT_FOUND`; a run in another state returns `409 RUN_NOT_RETRYABLE`; another active run returns `409 RUN_ALREADY_ACTIVE`.
 
 ## 12. Protected Deletion
 

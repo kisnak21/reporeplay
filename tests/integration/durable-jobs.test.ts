@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { claimNextDueJob, completeJob, heartbeatJob, recoverExpiredJobs, requestCancellation } from "../../src/server/jobs/repository";
+import { claimNextDueJob, completeJob, heartbeatJob, recoverExpiredJobs, requestCancellation, retryFailedRun } from "../../src/server/jobs/repository";
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
@@ -39,6 +39,35 @@ describeDatabase("durable PostgreSQL jobs", () => {
     expect(await claimNextDueJob(pool, "worker-a", 60)).toBeNull();
     const run = await pool.query<{ status: string }>(`SELECT "status"::text FROM "ProcessingRun" WHERE "id"=$1`, [fixture.runId]);
     expect(run.rows[0].status).toBe("CANCELLED");
+    await cleanup(pool, fixture.repositoryId);
+  });
+
+  it("requeues a failed run in place and clears its previous errors", async () => {
+    const fixture = await createFixture(pool, "manual-retry");
+    await pool.query(`UPDATE "ProcessingJob" SET "status"='FAILED',"attemptCount"=4,"leaseGeneration"=3,"lastErrorCode"='GITHUB_UNAVAILABLE',"lastErrorMessage"='temporary failure' WHERE "id"=$1`, [fixture.jobId]);
+    await pool.query(`UPDATE "ProcessingRun" SET "status"='FAILED',"currentStep"='DETECT_ROUTES',"fetchedCommitCount"=7,"processedCommitCount"=7,"checkpointSequence"=6,"errorCode"='GITHUB_UNAVAILABLE',"errorMessage"='temporary failure',"completedAt"=CURRENT_TIMESTAMP WHERE "id"=$1`, [fixture.runId]);
+
+    expect(await retryFailedRun(pool, fixture.repositoryId, fixture.runId)).toBe("QUEUED");
+    const result = await pool.query<{ jobStatus: string; runStatus: string; attemptCount: number; leaseGeneration: number; jobErrorCode: string | null; runErrorCode: string | null; step: string; fetched: number; processed: number; checkpoint: number; jobCount: number }>(
+      `SELECT j."status"::text AS "jobStatus",r."status"::text AS "runStatus",j."attemptCount",j."leaseGeneration",j."lastErrorCode" AS "jobErrorCode",r."errorCode" AS "runErrorCode",r."currentStep"::text AS "step",r."fetchedCommitCount" AS "fetched",r."processedCommitCount" AS "processed",r."checkpointSequence" AS "checkpoint",(SELECT COUNT(*)::int FROM "ProcessingJob" WHERE "runId"=r."id") AS "jobCount" FROM "ProcessingJob" j JOIN "ProcessingRun" r ON r."id"=j."runId" WHERE j."id"=$1`,
+      [fixture.jobId],
+    );
+    expect(result.rows[0]).toMatchObject({ jobStatus: "QUEUED", runStatus: "QUEUED", attemptCount: 0, leaseGeneration: 3, jobErrorCode: null, runErrorCode: null, step: "DISCOVER_HISTORY", fetched: 0, processed: 0, checkpoint: -1, jobCount: 1 });
+    await cleanup(pool, fixture.repositoryId);
+  });
+
+  it("serializes concurrent retries without creating a second job", async () => {
+    const fixture = await createFixture(pool, "concurrent-retry");
+    await pool.query(`UPDATE "ProcessingJob" SET "status"='FAILED' WHERE "id"=$1`, [fixture.jobId]);
+    await pool.query(`UPDATE "ProcessingRun" SET "status"='FAILED' WHERE "id"=$1`, [fixture.runId]);
+
+    const results = await Promise.all([
+      retryFailedRun(pool, fixture.repositoryId, fixture.runId),
+      retryFailedRun(pool, fixture.repositoryId, fixture.runId),
+    ]);
+    expect(results.sort()).toEqual(["NOT_RETRYABLE", "QUEUED"]);
+    const jobs = await pool.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM "ProcessingJob" WHERE "runId"=$1`, [fixture.runId]);
+    expect(jobs.rows[0].count).toBe(1);
     await cleanup(pool, fixture.repositoryId);
   });
 

@@ -54,6 +54,32 @@ test("validates repository URLs", async ({ page }) => {
   await expect(page.getByText("Enter a public GitHub repository URL")).toBeVisible();
 });
 
+test("retries a failed run without creating a new import", async ({ page }) => {
+  let retryQueued = false;
+  let retryRequests = 0;
+  let importRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/repositories")) importRequests += 1;
+  });
+  await page.route("**/api/repositories/retry-repository/runs/retry-run", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: retryQueued ? { id: "retry-run", status: "QUEUED", step: "DISCOVER_HISTORY", fetchedCommits: 0, processedCommits: 0, expectedCommits: 8, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 0, nextAttemptAt: null, warnings: [], error: null } : { id: "retry-run", status: "FAILED", step: "DETECT_ROUTES", fetchedCommits: 8, processedCommits: 8, expectedCommits: 8, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 4, nextAttemptAt: null, warnings: [], error: { code: "GITHUB_UNAVAILABLE", message: "GitHub is temporarily unavailable." } } }) });
+  });
+  await page.route("**/api/repositories/retry-repository/runs/retry-run/retry", async (route) => {
+    retryRequests += 1;
+    retryQueued = true;
+    await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ data: { repositoryId: "retry-repository", runId: "retry-run", status: "QUEUED" } }) });
+  });
+
+  await page.goto("/repositories/retry-repository/processing/retry-run");
+  await expect(page.getByRole("button", { name: "Retry run" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("previous snapshot remains unchanged");
+  await page.getByRole("button", { name: "Retry run" }).click();
+  await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Waiting for a worker to claim this run");
+  expect(retryRequests).toBe(1);
+  expect(importRequests).toBe(0);
+});
+
 test("filters timeline and opens commit evidence", async ({ page }) => {
   await page.goto("/repositories/demo");
   await page.getByLabel("Evidence").selectOption("DEPENDENCY");

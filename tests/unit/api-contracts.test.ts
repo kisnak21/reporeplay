@@ -10,6 +10,7 @@ interface ApiContracts {
   preflight: ContractFixture;
   timeline: ContractFixture;
   refresh: ContractFixture;
+  retry: ContractFixture;
 }
 
 describe("API contract fixtures", () => {

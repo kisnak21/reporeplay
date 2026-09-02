@@ -29,7 +29,7 @@ function isTerminal(status: ProcessingRunView["status"]): boolean {
 
 function getStatusMessage(run: ProcessingRunView): string {
   if (run.status === "SUCCEEDED") return "Snapshot activated. Staged evidence is now readable.";
-  if (run.status === "FAILED") return run.error?.message ?? "Processing failed. The previous snapshot remains unchanged.";
+  if (run.status === "FAILED") return run.error?.message ? `${run.error.message} The previous snapshot remains unchanged.` : "Processing failed. The previous snapshot remains unchanged.";
   if (run.status === "CANCELLED") return "Run cancelled. No staged output was activated.";
   if (run.status === "WAITING_RATE_LIMIT") return "GitHub rate limit reached. The worker will retry after the recorded reset time.";
   if (run.status === "RETRYABLE") return "This run will retry automatically after the recorded backoff.";
@@ -58,6 +58,7 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -101,10 +102,24 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
     }
   }
 
+  async function retryRun(): Promise<void> {
+    setRetrying(true);
+    setError("");
+    try {
+      await fetchApi(`/api/repositories/${repositoryId}/runs/${runId}/retry`, { method: "POST" });
+      setReloadKey((value) => value + 1);
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : "The run could not be queued for retry.");
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   if (loading && !run) return <p className="font-mono text-sm text-muted" role="status">Loading run status...</p>;
   if (error && !run) return <div className={ui.alert} role="alert"><strong>Run status unavailable.</strong><p>{error}</p><button className={`${ui.button} mt-3`} onClick={() => setReloadKey((value) => value + 1)} type="button">Retry status request</button></div>;
   if (!run) return null;
 
   const canCancel = ["QUEUED", "RUNNING", "WAITING_RATE_LIMIT", "RETRYABLE"].includes(run.status);
-  return <section aria-labelledby="processing-title"><header className={ui.screenHead}><div><p className={ui.eyebrow}>run {run.id.slice(0, 7)} / {run.kind ?? "IMPORT"}</p><h1 className={ui.sectionTitle} id="processing-title">Processing durable evidence.</h1></div><p className="m-0 text-muted"><code>repository {repositoryId.slice(0, 7)}</code><br /><code>{run.step === "FETCH_COMMITS" ? run.fetchedCommits : run.processedCommits} / {run.expectedCommits ?? "?"} commits</code><br /><code>{run.status}</code></p></header><div className="mt-8 grid grid-cols-[minmax(0,1fr)_20rem] gap-8 max-[800px]:grid-cols-1"><div><div className="border border-line bg-[#090d0f]" aria-label="Processing steps">{PROCESSING_STEPS.map((step, index) => { const state = getStepState(run, index); return <div className={`grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 border-b border-soft p-4 font-mono text-xs last:border-b-0 max-[560px]:grid-cols-1 ${state === "active" ? "bg-[#1d1a12]" : ""}`} key={step.key} aria-current={state === "active" ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><strong>{step.label}</strong><span className={state === "complete" ? ui.positive : state === "active" ? ui.signal : state === "stopped" ? ui.negative : ui.muted}>{getStepValue(run, step.key, state)}</span></div>; })}</div><p className="mt-3 font-mono text-xs text-muted" role="status" aria-live="polite">{getStatusMessage(run)}</p>{error ? <p className="mt-2 text-sm text-negative" role="alert">{error}</p> : null}</div><aside className={ui.terminal}><div className={ui.terminalHeader}><span>run state</span><span className={run.status === "FAILED" || run.status === "CANCELLED" ? ui.negative : run.status === "SUCCEEDED" ? ui.positive : ui.signal}>{run.status.toLowerCase()}</span></div><div className={ui.terminalBody}><div>attempt {run.attemptCount}</div><div>step {run.step}</div><div>worker {run.worker.status.toLowerCase()}</div><div>{run.worker.heartbeatAgeSeconds === null ? "heartbeat unavailable" : `heartbeat ${Math.round(run.worker.heartbeatAgeSeconds)}s ago`}</div><div>{run.warnings?.length ?? 0} warnings recorded</div>{run.nextAttemptAt ? <div>next attempt {new Date(run.nextAttemptAt).toLocaleString()}</div> : null}</div><div className="flex flex-col gap-3 px-4 pb-4">{canCancel ? <button className={ui.button} disabled={cancelling} onClick={() => void cancelRun()} type="button">{cancelling ? "Cancelling..." : "Cancel run"}</button> : null}<Link className={ui.primaryButton} href={`/repositories/${repositoryId}`}>{run.status === "SUCCEEDED" ? "View repository" : "Open repository"}</Link></div></aside></div></section>;
+  const canRetry = run.status === "FAILED";
+  return <section aria-labelledby="processing-title"><header className={ui.screenHead}><div><p className={ui.eyebrow}>run {run.id.slice(0, 7)} / {run.kind ?? "IMPORT"}</p><h1 className={ui.sectionTitle} id="processing-title">Processing durable evidence.</h1></div><p className="m-0 text-muted"><code>repository {repositoryId.slice(0, 7)}</code><br /><code>{run.step === "FETCH_COMMITS" ? run.fetchedCommits : run.processedCommits} / {run.expectedCommits ?? "?"} commits</code><br /><code>{run.status}</code></p></header><div className="mt-8 grid grid-cols-[minmax(0,1fr)_20rem] gap-8 max-[800px]:grid-cols-1"><div><div className="border border-line bg-[#090d0f]" aria-label="Processing steps">{PROCESSING_STEPS.map((step, index) => { const state = getStepState(run, index); return <div className={`grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 border-b border-soft p-4 font-mono text-xs last:border-b-0 max-[560px]:grid-cols-1 ${state === "active" ? "bg-[#1d1a12]" : ""}`} key={step.key} aria-current={state === "active" ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><strong>{step.label}</strong><span className={state === "complete" ? ui.positive : state === "active" ? ui.signal : state === "stopped" ? ui.negative : ui.muted}>{getStepValue(run, step.key, state)}</span></div>; })}</div><p className="mt-3 font-mono text-xs text-muted" role="status" aria-live="polite">{retrying ? "Retry requested. Waiting for the worker to claim this run." : getStatusMessage(run)}</p>{error ? <p className="mt-2 text-sm text-negative" role="alert">{error}</p> : null}</div><aside className={ui.terminal}><div className={ui.terminalHeader}><span>run state</span><span className={run.status === "FAILED" || run.status === "CANCELLED" ? ui.negative : run.status === "SUCCEEDED" ? ui.positive : ui.signal}>{run.status.toLowerCase()}</span></div><div className={ui.terminalBody}><div>attempt {run.attemptCount}</div><div>step {run.step}</div><div>worker {run.worker.status.toLowerCase()}</div><div>{run.worker.heartbeatAgeSeconds === null ? "heartbeat unavailable" : `heartbeat ${Math.round(run.worker.heartbeatAgeSeconds)}s ago`}</div><div>{run.warnings?.length ?? 0} warnings recorded</div>{run.nextAttemptAt ? <div>next attempt {new Date(run.nextAttemptAt).toLocaleString()}</div> : null}</div><div className="flex flex-col gap-3 px-4 pb-4">{canCancel ? <button className={ui.button} disabled={cancelling} onClick={() => void cancelRun()} type="button">{cancelling ? "Cancelling..." : "Cancel run"}</button> : null}{canRetry ? <button className={ui.button} disabled={retrying} onClick={() => void retryRun()} type="button">{retrying ? "Retrying..." : "Retry run"}</button> : null}<Link className={ui.primaryButton} href={`/repositories/${repositoryId}`}>{run.status === "SUCCEEDED" ? "View repository" : "Open repository"}</Link></div></aside></div></section>;
 }

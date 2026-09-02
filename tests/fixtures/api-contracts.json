@@ -13,5 +13,10 @@
     "request": {},
     "success": { "status": 202, "required": ["repositoryId", "run"] },
     "errors": ["RUN_ALREADY_ACTIVE", "REPOSITORY_LIMIT_EXCEEDED"]
+  },
+  "retry": {
+    "request": {},
+    "success": { "status": 202, "required": ["repositoryId", "runId", "status"] },
+    "errors": ["RUN_NOT_FOUND", "RUN_NOT_RETRYABLE", "RUN_ALREADY_ACTIVE", "SERVICE_UNAVAILABLE"]
   }
 }

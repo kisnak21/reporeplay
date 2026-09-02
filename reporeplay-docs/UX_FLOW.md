@@ -122,7 +122,7 @@ States:
 - `WAITING_RATE_LIMIT`: show the retry time and saved progress;
 - `RETRYABLE`: show next attempt and latest safe error;
 - `NEEDS_CONFIGURATION`: show root candidates;
-- `FAILED`: show stable error, retained active-snapshot status, and eligible retry action;
+- `FAILED`: show stable error, retained active-snapshot status, and an eligible `Retry run` action;
 - `SUCCEEDED`: navigate to the repository or offer an explicit button;
 - `CANCELLED`: explain that no staged output was activated.
 
