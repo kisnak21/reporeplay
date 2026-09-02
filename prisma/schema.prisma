@@ -156,6 +156,7 @@ model ProcessingRun {
   routeDetectorVersion      String
   currentStep               ProcessingStep
   processedCommitCount      Int                   @default(0)
+  fetchedCommitCount        Int                   @default(0)
   checkpointSequence        Int                   @default(-1)
   checkpointUpdatedAt       DateTime?             @db.Timestamptz
   requestedAt               DateTime              @default(now()) @db.Timestamptz

@@ -35,6 +35,7 @@ export interface ProcessingRunView {
   kind?: "IMPORT" | "REFRESH";
   status: RunStatus;
   step: ProcessingStep;
+  fetchedCommits: number;
   processedCommits: number;
   expectedCommits: number | null;
   attemptCount: number;

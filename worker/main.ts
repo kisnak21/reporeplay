@@ -8,7 +8,7 @@ import { RepoReplayError } from "../src/server/github/errors";
 import { ingestFirstParentHistory } from "../src/server/processing/ingest-first-parent";
 import { persistCategoriesForRun } from "../src/server/processing/classifier";
 import { detectDependenciesForHistory, detectRoutesForHistory } from "../src/server/processing/detectors";
-import { advanceRunStep, persistDetectorOutput, persistIngestionMetadata } from "../src/server/jobs/staged-repository";
+import { advanceRunStep, persistDetectorOutput, persistIngestionMetadata, updateFetchProgress } from "../src/server/jobs/staged-repository";
 import { validateRun } from "../src/server/processing/validate-run";
 import { startJobHeartbeat, type HeartbeatController } from "./heartbeat";
 import { createWorkerId } from "./identity";
@@ -63,7 +63,10 @@ async function startWorker(): Promise<void> {
       const fetchStepStarted = await setRunStep(pool, job, "FETCH_COMMITS");
       if (!fetchStepStarted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to start commit fetch: lease lost.");
       const ingestion = await raceWithHeartbeat(
-        ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits, expectedCommitCount: context.expectedCommitCount }),
+        ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits, expectedCommitCount: context.expectedCommitCount, onCommitFetched: async (fetchedCommitCount) => {
+          const updated = await updateFetchProgress(pool, job, fetchedCommitCount);
+          if (!updated) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist fetch progress: lease lost.");
+        } }),
         heartbeat,
       );
       const metadataPersisted = await persistIngestionMetadata(pool, job, { rootSha: ingestion.rootSha, expectedCommitCount: ingestion.count });

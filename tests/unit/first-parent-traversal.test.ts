@@ -45,6 +45,13 @@ describe("traverseFirstParent", () => {
     expect(chain.commits.map((c) => c.sha)).toEqual(["c1", "c2", "m1"]);
   });
 
+  it("reports each fetched commit in head-to-root order", async () => {
+    const source = createSource({ c1: { parentShas: [] }, c2: { parentShas: ["c1"] }, c3: { parentShas: ["c2"] } });
+    const progress: number[] = [];
+    await traverseFirstParent(source, "o", "r", "c3", 10, async (count) => { progress.push(count); });
+    expect(progress).toEqual([1, 2, 3]);
+  });
+
   it("rejects cycles", async () => {
     const source = createSource({ c1: { parentShas: ["c2"] }, c2: { parentShas: ["c1"] } });
     await expect(traverseFirstParent(source, "o", "r", "c1", 10)).rejects.toThrow("cycle");

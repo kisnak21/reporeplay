@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { claimNextDueJob } from "../../src/server/jobs/repository";
-import { persistDetectorOutput, writeCheckpointedCommitBatch } from "../../src/server/jobs/staged-repository";
+import { advanceRunStep, persistDetectorOutput, updateFetchProgress, writeCheckpointedCommitBatch } from "../../src/server/jobs/staged-repository";
 import { persistCategoriesForRun } from "../../src/server/processing/classifier";
 import { validateRun } from "../../src/server/processing/validate-run";
 
@@ -39,6 +39,24 @@ describeDatabase("staged output persistence", () => {
     expect(await writeCheckpointedCommitBatch(pool, stale, [createCommit(claim.runId, 0)])).toBe(false);
     const count = await pool.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM "RunCommit" WHERE "runId"=$1`, [claim.runId]);
     expect(count.rows[0].count).toBe(0);
+    await cleanup(pool, fixture.repositoryId);
+  });
+
+  it("persists fetched commit progress behind the active lease", async () => {
+    const fixture = await createFixture(pool, "fetch-progress");
+    const claim = await claimNextDueJob(pool, "writer-a", 60);
+    expect(claim).not.toBeNull();
+    if (!claim) return;
+    const client = await pool.connect();
+    try {
+      expect(await advanceRunStep(client, claim, "FETCH_COMMITS")).toBe(true);
+    } finally {
+      client.release();
+    }
+    expect(await updateFetchProgress(pool, claim, 3)).toBe(true);
+    expect(await updateFetchProgress(pool, { ...claim, leaseGeneration: claim.leaseGeneration - 1 }, 4)).toBe(false);
+    const result = await pool.query<{ fetched: number; step: string }>(`SELECT "fetchedCommitCount" fetched,"currentStep" step FROM "ProcessingRun" WHERE "id"=$1`, [claim.runId]);
+    expect(result.rows[0]).toEqual({ fetched: 3, step: "FETCH_COMMITS" });
     await cleanup(pool, fixture.repositoryId);
   });
 

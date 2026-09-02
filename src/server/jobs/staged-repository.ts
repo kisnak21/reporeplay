@@ -56,6 +56,11 @@ export async function persistIngestionMetadata(pool: Pool, job: JobLease, metada
   }
 }
 
+export async function updateFetchProgress(pool: Pool, job: JobLease, fetchedCommitCount: number): Promise<boolean> {
+  const result = await pool.query(`UPDATE "ProcessingRun" r SET "fetchedCommitCount"=$1,"checkpointUpdatedAt"=CURRENT_TIMESTAMP WHERE "id"=$2 AND "currentStep"='FETCH_COMMITS' AND EXISTS (SELECT 1 FROM "ProcessingJob" j JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$3 AND j."runId"=r."id" AND j."status"='RUNNING' AND j."leaseOwner"=$4 AND j."leaseGeneration"=$5 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL)`, [fetchedCommitCount, job.runId, job.jobId, job.workerId, job.leaseGeneration]);
+  return result.rowCount === 1;
+}
+
 export async function writeCommitBatch(client: PoolClient, job: CheckpointInput, commits: CommitInput[]): Promise<boolean> {
   const lease = await assertLease(client, job);
   if (!lease) return false;
@@ -165,7 +170,7 @@ export async function persistDetectorOutput(pool: Pool, input: PersistDetectorOu
 }
 
 export async function advanceRunStep(client: PoolClient, job: JobLease, step: string): Promise<boolean> {
-  const result = await client.query(`UPDATE "ProcessingRun" r SET "currentStep"=$1::"ProcessingStep","checkpointUpdatedAt"=CURRENT_TIMESTAMP WHERE "id"=$2 AND EXISTS (SELECT 1 FROM "ProcessingJob" j JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$3 AND j."runId"=r."id" AND j."status"='RUNNING' AND j."leaseOwner"=$4 AND j."leaseGeneration"=$5 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL)`, [step, job.runId, job.jobId, job.workerId, job.leaseGeneration]);
+  const result = await client.query(`UPDATE "ProcessingRun" r SET "currentStep"=$1::"ProcessingStep","fetchedCommitCount"=CASE WHEN $1='FETCH_COMMITS' THEN 0 ELSE "fetchedCommitCount" END,"checkpointUpdatedAt"=CURRENT_TIMESTAMP WHERE "id"=$2 AND EXISTS (SELECT 1 FROM "ProcessingJob" j JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE j."id"=$3 AND j."runId"=r."id" AND j."status"='RUNNING' AND j."leaseOwner"=$4 AND j."leaseGeneration"=$5 AND j."leaseExpiresAt">CURRENT_TIMESTAMP AND repo."deletedAt" IS NULL)`, [step, job.runId, job.jobId, job.workerId, job.leaseGeneration]);
   return result.rowCount === 1;
 }
 

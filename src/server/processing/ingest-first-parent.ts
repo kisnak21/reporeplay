@@ -16,6 +16,7 @@ export interface IngestFirstParentOptions {
   headSha: string;
   maxCommits: number;
   expectedCommitCount: number;
+  onCommitFetched?: (fetchedCommitCount: number) => Promise<void>;
   batchSize?: number;
 }
 
@@ -50,7 +51,7 @@ function toCommitInput(runId: string, commit: GitHubCommitDetail & { firstParent
 
 export async function ingestFirstParentHistory(options: IngestFirstParentOptions): Promise<{ rootSha: string; count: number; commits: FirstParentCommit[] }> {
   const { source, pool, job, owner, name, headSha, maxCommits, expectedCommitCount, batchSize = 20 } = options;
-  const chain = await traverseFirstParent(source, owner, name, headSha, maxCommits);
+  const chain = await traverseFirstParent(source, owner, name, headSha, maxCommits, options.onCommitFetched);
   if (chain.commits.length !== expectedCommitCount) {
     throw new RepoReplayError("PROCESSING_FAILED", "The first-parent history changed after preflight.", { expected: expectedCommitCount, actual: chain.commits.length, headSha });
   }

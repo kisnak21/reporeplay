@@ -3,14 +3,16 @@ import type { GitHubCommitDetail, GitHubRepositorySource } from "@/server/github
 
 export interface FirstParentCommit extends GitHubCommitDetail { firstParentSha: string | null; sequence: number }
 export interface FirstParentChain { rootSha: string; headSha: string; commits: FirstParentCommit[] }
+export type FirstParentProgress = (fetchedCommitCount: number) => Promise<void>;
 
-export async function traverseFirstParent(source: GitHubRepositorySource, owner: string, name: string, headSha: string, maxCommits: number): Promise<FirstParentChain> {
+export async function traverseFirstParent(source: GitHubRepositorySource, owner: string, name: string, headSha: string, maxCommits: number, onCommitFetched?: FirstParentProgress): Promise<FirstParentChain> {
   const seen = new Set<string>(); const reverse: GitHubCommitDetail[] = []; let currentSha: string | null = headSha;
   while (currentSha) {
     if (seen.has(currentSha)) throw new RepoReplayError("PROCESSING_FAILED", "Git history contains a cycle.");
     seen.add(currentSha);
     const commit = await source.getCommit(owner, name, currentSha);
     reverse.push(commit);
+    await onCommitFetched?.(reverse.length);
     if (reverse.length > maxCommits) throw new RepoReplayError("REPOSITORY_LIMIT_EXCEEDED", "The repository exceeds the configured first-parent history limit.", { limit: "firstParentCommits", actual: reverse.length, allowed: maxCommits });
     currentSha = commit.parentShas[0] ?? null;
   }

@@ -23,6 +23,7 @@ export const processingFixture: ProcessingRunView = {
   id: "run-demo",
   status: "RUNNING",
   step: "FETCH_COMMITS",
+  fetchedCommits: 72,
   processedCommits: 72,
   expectedCommits: 184,
   attemptCount: 1,

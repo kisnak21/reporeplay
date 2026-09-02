@@ -87,6 +87,7 @@ A run freezes source scope and detector provenance.
 | routeDetectorVersion | string | independent provenance |
 | currentStep | enum | processing checkpoint step |
 | processedCommitCount | integer | derived contiguous progress count |
+| fetchedCommitCount | integer | latest durable count of commits fetched from GitHub |
 | checkpointSequence | integer | highest contiguous sequence completed for `currentStep`; `-1` means none |
 | checkpointUpdatedAt | datetime? | last durable checkpoint write |
 | requestedAt | datetime | |
