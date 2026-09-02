@@ -8,7 +8,7 @@ import { RepoReplayError } from "../src/server/github/errors";
 import { ingestFirstParentHistory } from "../src/server/processing/ingest-first-parent";
 import { persistCategoriesForRun } from "../src/server/processing/classifier";
 import { detectDependenciesForHistory, detectRoutesForHistory } from "../src/server/processing/detectors";
-import { persistDetectorOutput, persistIngestionMetadata } from "../src/server/jobs/staged-repository";
+import { advanceRunStep, persistDetectorOutput, persistIngestionMetadata } from "../src/server/jobs/staged-repository";
 import { validateRun } from "../src/server/processing/validate-run";
 import { startJobHeartbeat, type HeartbeatController } from "./heartbeat";
 import { createWorkerId } from "./identity";
@@ -60,6 +60,8 @@ async function startWorker(): Promise<void> {
       const context = await getJobRunContext(pool, job.runId);
       if (!context) throw new RepoReplayError("PROCESSING_FAILED", "Run context not found.");
       const source = createGitHubSourceFromEnvironment(environment);
+      const fetchStepStarted = await setRunStep(pool, job, "FETCH_COMMITS");
+      if (!fetchStepStarted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to start commit fetch: lease lost.");
       const ingestion = await raceWithHeartbeat(
         ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits, expectedCommitCount: context.expectedCommitCount }),
         heartbeat,
@@ -108,6 +110,15 @@ async function startWorker(): Promise<void> {
       await scheduleRetry(pool, job, retryPolicy, "PROCESSING_FAILED", error instanceof Error ? error.message : "Unknown processing failure");
     } finally {
       heartbeat.stop();
+    }
+  }
+
+  async function setRunStep(jobPool: typeof pool, job: ClaimedJob, step: string): Promise<boolean> {
+    const client = await jobPool.connect();
+    try {
+      return await advanceRunStep(client, job, step);
+    } finally {
+      client.release();
     }
   }
 }

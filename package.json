@@ -16,7 +16,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "worker": "tsx --env-file=.env.local worker/main.ts"
+    "worker": "node --env-file=.env.local --import ./worker/runtime-preload.mjs --import tsx/esm worker/main.ts"
   },
   "dependencies": {
     "@prisma/client": "^7.2.0",
