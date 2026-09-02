@@ -26,6 +26,7 @@ export const processingFixture: ProcessingRunView = {
   fetchedCommits: 72,
   processedCommits: 72,
   expectedCommits: 184,
+  worker: { status: "HEALTHY", lastHeartbeatAt: "2026-08-31T09:45:00Z", heartbeatAgeSeconds: 4 },
   attemptCount: 1,
   nextAttemptAt: null,
 };

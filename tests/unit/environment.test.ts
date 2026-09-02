@@ -20,6 +20,10 @@ describe("parseEnvironment", () => {
     expect(environment.JOB_RETRY_MAX_SECONDS).toBe(3_600);
   });
 
+  it("treats an empty optional admin token as unconfigured", () => {
+    expect(parseEnvironment({ ...validEnvironment, ADMIN_HEALTH_TOKEN: "" }).ADMIN_HEALTH_TOKEN).toBeUndefined();
+  });
+
   it("rejects a heartbeat that cannot renew before lease expiry", () => {
     expect(() => parseEnvironment({
       ...validEnvironment,

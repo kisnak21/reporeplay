@@ -8,6 +8,7 @@ export const environmentSchema = z.object({
   GITHUB_APP_ID: z.string().min(1),
   GITHUB_APP_PRIVATE_KEY: z.string().min(1),
   GITHUB_APP_INSTALLATION_ID: z.string().min(1),
+  ADMIN_HEALTH_TOKEN: z.preprocess((value) => value === "" ? undefined : value, z.string().min(1).optional()),
   MAX_FIRST_PARENT_COMMITS: positiveInteger.default(500),
   MAX_HEAD_FILES: positiveInteger.default(25_000),
   JOB_LEASE_SECONDS: positiveInteger.default(60),

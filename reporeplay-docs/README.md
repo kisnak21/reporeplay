@@ -82,6 +82,8 @@ Browser -> Next.js web/API -> PostgreSQL <- worker process -> GitHub REST API
 
 The worker claims PostgreSQL jobs using expiring leases. A failed refresh does not replace the last successful snapshot. Successful output is activated in one transaction.
 
+For local development, run the web process and worker separately: `npm run dev` serves the UI/API, while `npm run worker` claims and processes queued jobs.
+
 ## Suggested Stack
 
 - Next.js and TypeScript

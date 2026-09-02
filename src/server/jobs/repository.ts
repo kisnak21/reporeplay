@@ -1,6 +1,32 @@
 import type { Pool, PoolClient } from "pg";
 import { computeRetryDelaySeconds, hasExhaustedAttempts, type RetryPolicy } from "./retry-policy";
 
+export const DEFAULT_WORKER_HEARTBEAT_TIMEOUT_SECONDS = 120;
+export const WORKER_HEALTH_STATES = ["HEALTHY", "DEGRADED", "OFFLINE"] as const;
+export type WorkerHealthState = (typeof WORKER_HEALTH_STATES)[number];
+
+export interface WorkerLiveness {
+  status: WorkerHealthState;
+  lastHeartbeatAt: Date | null;
+  heartbeatAgeSeconds: number | null;
+}
+
+export interface WorkerHealthSnapshot {
+  status: WorkerHealthState;
+  checkedAt: Date;
+  heartbeatTimeoutSeconds: number;
+  workers: Array<{
+    workerId: string;
+    processVersion: string;
+    lastHeartbeatAt: Date;
+    heartbeatAgeSeconds: number;
+    lastClaimAt: Date | null;
+    lastSuccessAt: Date | null;
+    activeJobCount: number;
+  }>;
+  queue: { dueJobs: number; expiredJobs: number; oldestDueSeconds: number | null };
+}
+
 export interface ClaimedJob {
   jobId: string;
   runId: string;
@@ -131,6 +157,28 @@ export async function getQueueHealth(pool: Pool): Promise<{ dueJobs: number; exp
     EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP-MIN("nextAttemptAt") FILTER (WHERE "status" IN ('QUEUED','RETRYABLE','WAITING_RATE_LIMIT') AND "nextAttemptAt"<=CURRENT_TIMESTAMP)))::float AS "oldestDueSeconds"
     FROM "ProcessingJob"`);
   return result.rows[0];
+}
+
+export async function getWorkerLiveness(pool: Pool, heartbeatTimeoutSeconds = DEFAULT_WORKER_HEARTBEAT_TIMEOUT_SECONDS): Promise<WorkerLiveness> {
+  const result = await pool.query<{ lastHeartbeatAt: Date; heartbeatAgeSeconds: number }>(`SELECT "lastHeartbeatAt",EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP-"lastHeartbeatAt"))::float AS "heartbeatAgeSeconds" FROM "WorkerHeartbeat" ORDER BY "lastHeartbeatAt" DESC LIMIT 1`);
+  const row = result.rows[0];
+  if (!row) return { status: "OFFLINE", lastHeartbeatAt: null, heartbeatAgeSeconds: null };
+  const heartbeatAgeSeconds = Math.max(0, row.heartbeatAgeSeconds);
+  return { status: heartbeatAgeSeconds <= heartbeatTimeoutSeconds ? "HEALTHY" : "OFFLINE", lastHeartbeatAt: row.lastHeartbeatAt, heartbeatAgeSeconds };
+}
+
+export async function getWorkerHealth(pool: Pool, heartbeatTimeoutSeconds: number, queueLagWarnSeconds: number): Promise<WorkerHealthSnapshot> {
+  const [queue, workers, activeJobs] = await Promise.all([
+    getQueueHealth(pool),
+    pool.query<{ workerId: string; processVersion: string; lastHeartbeatAt: Date; heartbeatAgeSeconds: number; lastClaimAt: Date | null; lastSuccessAt: Date | null }>(`SELECT "workerId","processVersion","lastHeartbeatAt",EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP-"lastHeartbeatAt"))::float AS "heartbeatAgeSeconds","lastClaimAt","lastSuccessAt" FROM "WorkerHeartbeat" ORDER BY "lastHeartbeatAt" DESC`),
+    pool.query<{ workerId: string; activeJobCount: number }>(`SELECT "leaseOwner" AS "workerId",COUNT(*)::int AS "activeJobCount" FROM "ProcessingJob" WHERE "status"='RUNNING' AND "leaseOwner" IS NOT NULL AND "leaseExpiresAt">CURRENT_TIMESTAMP GROUP BY "leaseOwner"`),
+  ]);
+  const activeJobCounts = new Map(activeJobs.rows.map((row) => [row.workerId, row.activeJobCount]));
+  const workerRows = workers.rows.map((worker) => ({ ...worker, heartbeatAgeSeconds: Math.max(0, worker.heartbeatAgeSeconds), activeJobCount: activeJobCounts.get(worker.workerId) ?? 0 }));
+  const liveWorkers = workerRows.filter((worker) => worker.heartbeatAgeSeconds <= heartbeatTimeoutSeconds);
+  const queueLagging = queue.oldestDueSeconds !== null && queue.oldestDueSeconds > queueLagWarnSeconds;
+  const status: WorkerHealthState = liveWorkers.length === 0 ? "OFFLINE" : queue.expiredJobs > 0 || queueLagging ? "DEGRADED" : "HEALTHY";
+  return { status, checkedAt: new Date(), heartbeatTimeoutSeconds, workers: workerRows, queue };
 }
 
 export async function getJobRunContext(pool: Pool, runId: string): Promise<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string; maxCommits: number; expectedCommitCount: number } | null> {

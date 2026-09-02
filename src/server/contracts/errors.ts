@@ -19,6 +19,7 @@ export const errorCodes = [
   "CURSOR_SNAPSHOT_MISMATCH",
   "PROCESSING_FAILED",
   "ADMIN_UNAUTHORIZED",
+  "SERVICE_UNAVAILABLE",
 ] as const;
 
 export type ErrorCode = (typeof errorCodes)[number];

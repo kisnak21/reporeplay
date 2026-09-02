@@ -271,7 +271,7 @@ Repository responses include a coverage summary. Timeline and commit responses i
 
 ## 14. Health and Observability
 
-Web health checks database connectivity. Worker health reports process liveness, database connectivity, last successful heartbeat, and queue lag. Logs use repository, run, job, and worker IDs but exclude credentials and raw imported content where unnecessary.
+Web health checks database connectivity. The run-status response also exposes coarse worker liveness so a queued run can explain when no worker is available. The protected worker-health endpoint reports process liveness, database connectivity, last successful heartbeat, active jobs, and queue lag. Logs use repository, run, job, and worker IDs but exclude credentials and raw imported content where unnecessary.
 
 Required operational evidence:
 

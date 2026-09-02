@@ -1,4 +1,5 @@
 import type { CommitCategory, ProcessingStep, RepositoryAvailability, RunStatus } from "./processing";
+import type { WorkerHealthState } from "@/server/jobs/repository";
 
 export interface PublicLimits {
   maxFirstParentCommits: number;
@@ -38,6 +39,7 @@ export interface ProcessingRunView {
   fetchedCommits: number;
   processedCommits: number;
   expectedCommits: number | null;
+  worker: { status: WorkerHealthState; lastHeartbeatAt: string | null; heartbeatAgeSeconds: number | null };
   attemptCount: number;
   nextAttemptAt: string | null;
   warnings?: CoverageWarning[];

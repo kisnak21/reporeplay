@@ -42,7 +42,7 @@ Every task is complete only when its acceptance test passes. Tests are built wit
 - [ ] Implement expired-lease recovery sweeper.
 - [ ] Implement cooperative cancellation.
 - [ ] Prevent stale lease owners from checkpointing, activating, or recreating deleted data.
-- [ ] Add queue lag and worker heartbeat health reporting.
+- [x] Add queue lag and worker heartbeat health reporting.
 - [ ] Test competing workers, termination, expiry, retry, exhaustion, and cancellation.
 
 **Acceptance:** Killing a worker mid-step leads to one resumed result with no duplicate active data.
@@ -231,7 +231,7 @@ Every task is complete only when its acceptance test passes. Tests are built wit
 - [ ] Deploy independent web and worker processes.
 - [ ] Configure GitHub App secrets and token handling.
 - [ ] Configure worker concurrency, leases, limits, throttles, and retention.
-- [ ] Add public web health and protected worker health.
+- [x] Add public web health and protected worker health.
 - [ ] Add structured error logging and queue-lag monitoring.
 - [ ] Measure GitHub request budget for fixture sizes and showcase import.
 - [ ] Write worker interruption, stuck-job, rate-limit, rollback, and deletion recovery procedures.

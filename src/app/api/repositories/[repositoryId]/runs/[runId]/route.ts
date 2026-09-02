@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/server/db/client-pool";
+import { getWorkerLiveness } from "@/server/jobs/repository";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ repositoryId: string; runId: string }> }) {
   const { repositoryId, runId } = await params;
@@ -8,6 +9,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ rep
   if (!run.rows[0]) return NextResponse.json({ error: { code: "RUN_NOT_FOUND", message: "Run not found." } }, { status: 404 });
   const warnings = await pool.query(`SELECT "code","detector","path","message","detectorVersion" FROM "ProcessingWarning" WHERE "runId"=$1 ORDER BY "createdAt","id"`, [runId]);
   const row = run.rows[0];
+  const worker = await getWorkerLiveness(pool);
   return NextResponse.json({
     data: {
       id: row.id,
@@ -17,6 +19,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ rep
       fetchedCommits: row.fetchedCommitCount,
       processedCommits: row.processedCommitCount,
       expectedCommits: row.expectedCommitCount,
+      worker: { status: worker.status, lastHeartbeatAt: worker.lastHeartbeatAt?.toISOString() ?? null, heartbeatAgeSeconds: worker.heartbeatAgeSeconds },
       attemptCount: row.attemptCount ?? 0,
       nextAttemptAt: row.nextAttemptAt,
       warnings: warnings.rows,
