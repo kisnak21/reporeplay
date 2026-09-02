@@ -6,6 +6,8 @@ export const ui = {
   nav: "flex gap-4 max-[560px]:gap-2.5 [&>a]:min-h-0",
   eyebrow: "m-0 mb-3 font-mono text-xs uppercase tracking-wider text-cyan",
   title: "m-0 max-w-[15ch] text-[clamp(2.7rem,7vw,6.8rem)] leading-tight tracking-[-.055em]",
+  commitTitle: "m-0 max-w-[38ch] break-words text-[clamp(1.65rem,3.4vw,2.75rem)] font-semibold leading-[1.15] tracking-[-.025em]",
+  commitBody: "m-0 mt-4 max-w-[70ch] whitespace-pre-wrap break-words text-base leading-7 text-muted",
   sectionTitle: "m-0 text-[clamp(1.5rem,3vw,2.6rem)] leading-tight tracking-[-.035em]",
   lede: "my-5 max-w-3xl text-[clamp(1.1rem,2vw,1.35rem)] text-muted",
   terminal: "border border-line bg-panel font-mono text-[.82rem] shadow-[8px_8px_0_#080b0c]",

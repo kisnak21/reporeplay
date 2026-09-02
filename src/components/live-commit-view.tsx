@@ -46,8 +46,11 @@ export function LiveCommitView({ repositoryId, sha }: LiveCommitViewProps) {
   if (error && !commit) return <div className={ui.alert} role="alert"><strong>Commit evidence unavailable.</strong><p>{error}</p><div className="mt-3 flex flex-wrap gap-3"><button className={ui.button} onClick={() => setReloadKey((value) => value + 1)} type="button">Retry evidence request</button><Link className={ui.button} href={`/repositories/${repositoryId}`}>Back to repository</Link></div></div>;
   if (!commit) return null;
 
+  const [subject, ...bodyLines] = commit.message.trim().split(/\r?\n/);
+  const body = bodyLines.join("\n").trim();
+
   return <>
-    <header className={ui.screenHead}><div><p className={ui.eyebrow}>commit / {commit.shortSha}</p><h1 className={ui.title}>{commit.message}</h1></div><div className="font-mono text-xs leading-loose text-muted"><div>{commit.authorName ?? "unknown author"}</div><div>{new Date(commit.committedAt).toLocaleString()}</div><div>{commit.category.value} / {commit.category.source}</div></div></header>
+    <header className={ui.screenHead}><div><p className={ui.eyebrow}>commit / {commit.shortSha}</p><h1 className={ui.commitTitle}>{subject || "Commit message unavailable"}</h1>{body ? <p className={ui.commitBody}>{body}</p> : null}</div><dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2 self-start border-t border-soft pt-3 font-mono text-xs leading-relaxed text-muted"><dt>author</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{commit.authorName ?? "unknown author"}</dd><dt>committed</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{new Date(commit.committedAt).toLocaleString()}</dd><dt>category</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{commit.category.value} / {commit.category.source}</dd></dl></header>
     {error ? <p className="mt-4 text-sm text-negative" role="alert">{error}</p> : null}
     <div className="mt-4 flex flex-wrap gap-3"><Link className={ui.button} href={`/repositories/${repositoryId}`}>Close evidence</Link><a className={ui.primaryButton} href={commit.externalUrl}>Open on GitHub</a></div>
     <div className={ui.dataGrid} aria-label="Commit statistics"><Fact label="changed files" value={String(commit.statistics.changedFiles)} /><Fact label="additions" value={`+${commit.statistics.additions}`} /><Fact label="deletions" value={`-${commit.statistics.deletions}`} /><Fact label="first parent" value={commit.firstParentSha?.slice(0, 7) ?? "root commit"} /></div>

@@ -80,6 +80,39 @@ test("retries a failed run without creating a new import", async ({ page }) => {
   expect(importRequests).toBe(0);
 });
 
+test("keeps commit subjects and bodies readable", async ({ page }) => {
+  await page.route("**/api/repositories/readability-repo/commits/abc1234", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          snapshot: { runId: "readability-run" },
+          sha: "abc1234def5678",
+          shortSha: "abc1234",
+          firstParentSha: null,
+          message: "feat: make retry recovery visible\n\nRetry failures without importing the repository again.",
+          authorName: "Test author",
+          authoredAt: "2026-09-02T00:00:00Z",
+          committedAt: "2026-09-02T00:00:00Z",
+          statistics: { changedFiles: 1, additions: 12, deletions: 3 },
+          category: { value: "FEATURE", source: "CONVENTIONAL_COMMIT" },
+          files: [],
+          dependencyChanges: [],
+          routeChanges: [],
+          warnings: [],
+          externalUrl: "https://github.com/acme/ledger/commit/abc1234def5678",
+        },
+      }),
+    });
+  });
+
+  await page.goto("/repositories/readability-repo/commits/abc1234");
+  await expect(page.getByRole("heading", { level: 1, name: "feat: make retry recovery visible" })).toBeVisible();
+  await expect(page.getByText("Retry failures without importing the repository again.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).not.toContainText("Retry failures");
+});
+
 test("filters timeline and opens commit evidence", async ({ page }) => {
   await page.goto("/repositories/demo");
   await page.getByLabel("Evidence").selectOption("DEPENDENCY");
