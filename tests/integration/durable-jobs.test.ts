@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { claimNextDueJob, heartbeatJob, recoverExpiredJobs, requestCancellation } from "../../src/server/jobs/repository";
+import { claimNextDueJob, completeJob, heartbeatJob, recoverExpiredJobs, requestCancellation } from "../../src/server/jobs/repository";
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
@@ -60,6 +60,19 @@ describeDatabase("durable PostgreSQL jobs", () => {
     await recoverExpiredJobs(pool, retryPolicy);
     const result = await pool.query<{ status: string; errorCode: string }>(`SELECT "status"::text,"lastErrorCode" AS "errorCode" FROM "ProcessingJob" WHERE "id"=$1`, [fixture.jobId]);
     expect(result.rows[0]).toMatchObject({ status: "FAILED", errorCode: "JOB_ATTEMPTS_EXHAUSTED" });
+    await cleanup(pool, fixture.repositoryId);
+  });
+
+  it("clears retry errors when a run completes", async () => {
+    const fixture = await createFixture(pool, "completion-errors");
+    const job = await claimNextDueJob(pool, "worker-a", 60);
+    expect(job).not.toBeNull();
+    if (!job) return;
+    await pool.query(`UPDATE "ProcessingJob" SET "lastErrorCode"='PROCESSING_FAILED',"lastErrorMessage"='previous attempt' WHERE "id"=$1`, [fixture.jobId]);
+    await pool.query(`UPDATE "ProcessingRun" SET "errorCode"='PROCESSING_FAILED',"errorMessage"='previous attempt',"currentStep"='ACTIVATE_RUN' WHERE "id"=$1`, [fixture.runId]);
+    expect(await completeJob(pool, job)).toBe(true);
+    const result = await pool.query<{ jobErrorCode: string | null; jobErrorMessage: string | null; runErrorCode: string | null; runErrorMessage: string | null }>(`SELECT j."lastErrorCode" AS "jobErrorCode",j."lastErrorMessage" AS "jobErrorMessage",r."errorCode" AS "runErrorCode",r."errorMessage" AS "runErrorMessage" FROM "ProcessingJob" j JOIN "ProcessingRun" r ON r."id"=j."runId" WHERE j."id"=$1`, [fixture.jobId]);
+    expect(result.rows[0]).toEqual({ jobErrorCode: null, jobErrorMessage: null, runErrorCode: null, runErrorMessage: null });
     await cleanup(pool, fixture.repositoryId);
   });
 });
