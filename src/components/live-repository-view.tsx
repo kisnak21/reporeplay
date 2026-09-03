@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CoverageWarning, TimelineItem } from "@/server/contracts/api";
-import { fetchApi } from "@/lib/client-api";
+import { ApiError, fetchApi } from "@/lib/client-api";
 import { ui } from "@/lib/ui";
 import { Timeline } from "@/components/timeline";
 
@@ -44,9 +45,38 @@ interface LiveRepositoryViewProps {
   repositoryId: string;
 }
 
+const PAGE_LIMIT = 30;
+const VALID_EVENTS = ["ALL", "ROUTE", "DEPENDENCY"] as const;
+
+function sanitizeEvent(value: string | null): string {
+  return value !== null && (VALID_EVENTS as readonly string[]).includes(value) ? value : "ALL";
+}
+
+function errorMessage(caught: unknown, fallback: string): string {
+  return caught instanceof Error ? caught.message : fallback;
+}
+
+function timelineQuery(cursor: string | null, query: string, event: string): string {
+  const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+  if (cursor) params.set("cursor", cursor);
+  if (query) params.set("query", query);
+  if (event !== "ALL") params.set("event", event);
+  return params.toString();
+}
+
 export function LiveRepositoryView({ repositoryId }: LiveRepositoryViewProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const query = searchParams.get("query") ?? "";
+  const event = sanitizeEvent(searchParams.get("event"));
+
   const [repository, setRepository] = useState<RepositoryResponse | null>(null);
-  const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
+  const [items, setItems] = useState<TimelineItem[]>([]);
+  const [pageInfo, setPageInfo] = useState<TimelineResponse["pageInfo"]>({ nextCursor: null, hasNextPage: false });
+  const [timelineLoaded, setTimelineLoaded] = useState(false);
+  const [mismatch, setMismatch] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
@@ -57,17 +87,13 @@ export function LiveRepositoryView({ repositoryId }: LiveRepositoryViewProps) {
 
     async function loadRepository(): Promise<void> {
       try {
-        const [repositoryData, timelineData] = await Promise.all([
-          fetchApi<RepositoryResponse>(`/api/repositories/${repositoryId}`, { signal: controller.signal }),
-          fetchApi<TimelineResponse>(`/api/repositories/${repositoryId}/commits?limit=30`, { signal: controller.signal }),
-        ]);
+        const repositoryData = await fetchApi<RepositoryResponse>(`/api/repositories/${repositoryId}`, { signal: controller.signal });
         if (!mounted) return;
         setRepository(repositoryData);
-        setTimeline(timelineData);
         setError("");
       } catch (caught: unknown) {
         if (!mounted || controller.signal.aborted) return;
-        setError(caught instanceof Error ? caught.message : "The repository could not be loaded.");
+        setError(errorMessage(caught, "The repository could not be loaded."));
       } finally {
         if (mounted) setLoading(false);
       }
@@ -80,6 +106,69 @@ export function LiveRepositoryView({ repositoryId }: LiveRepositoryViewProps) {
     };
   }, [reloadKey, repositoryId]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    let mounted = true;
+
+    async function loadTimeline(): Promise<void> {
+      try {
+        const timelineData = await fetchApi<TimelineResponse>(`/api/repositories/${repositoryId}/commits?${timelineQuery(null, query, event)}`, { signal: controller.signal });
+        if (!mounted) return;
+        setItems(timelineData.items);
+        setPageInfo(timelineData.pageInfo);
+        setError("");
+      } catch (caught: unknown) {
+        if (!mounted || controller.signal.aborted) return;
+        setError(errorMessage(caught, "The timeline could not be loaded."));
+      } finally {
+        if (mounted) setTimelineLoaded(true);
+      }
+    }
+
+    void loadTimeline();
+    return () => {
+      mounted = false;
+      controller.abort();
+    };
+  }, [reloadKey, repositoryId, query, event]);
+
+  function updateFilters(nextQuery: string, nextEvent: string): void {
+    setTimelineLoaded(false);
+    setMismatch(null);
+    const params = new URLSearchParams();
+    if (nextQuery) params.set("query", nextQuery);
+    if (nextEvent !== "ALL") params.set("event", nextEvent);
+    const search = params.toString();
+    router.replace(search ? `${pathname}?${search}` : pathname, { scroll: false });
+  }
+
+  function clearFilters(): void {
+    updateFilters("", "ALL");
+  }
+
+  async function loadOlder(): Promise<void> {
+    if (!pageInfo.hasNextPage || !pageInfo.nextCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const timelineData = await fetchApi<TimelineResponse>(`/api/repositories/${repositoryId}/commits?${timelineQuery(pageInfo.nextCursor, query, event)}`);
+      setItems((previous) => [...previous, ...timelineData.items]);
+      setPageInfo(timelineData.pageInfo);
+    } catch (caught: unknown) {
+      if (caught instanceof ApiError && caught.code === "CURSOR_SNAPSHOT_MISMATCH") {
+        setMismatch(caught.message);
+      } else {
+        setError(errorMessage(caught, "Older commits could not be loaded."));
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  function reloadFromTop(): void {
+    setMismatch(null);
+    setReloadKey((value) => value + 1);
+  }
+
   if (loading && !repository) return <p className="font-mono text-sm text-muted" role="status">Loading repository evidence...</p>;
   if (error && !repository) return <div className={ui.alert} role="alert"><strong>Repository unavailable.</strong><p>{error}</p><button className={`${ui.button} mt-3`} onClick={() => setReloadKey((value) => value + 1)} type="button">Retry repository request</button></div>;
   if (!repository) return null;
@@ -91,7 +180,7 @@ export function LiveRepositoryView({ repositoryId }: LiveRepositoryViewProps) {
     {snapshot ? <>
       <div className={ui.dataGrid} aria-label="Repository summary"><Fact label="history" value={`${snapshot.firstParentCommitCount} complete`} /><Fact label="routes at head" value={String(snapshot.routeCount)} /><Fact label="declared dependencies" value={String(snapshot.dependencyCount)} /><Fact label="coverage warnings" value={`${snapshot.coverage.warnings.length} review`} /></div>
       {snapshot.coverage.warnings.map((warning, index) => <div className={ui.alert} key={`${warning.code}-${warning.path ?? "run"}-${index}`}><strong>Coverage warning.</strong><p>{warning.message} <code>{warning.path ?? "detector-wide"}</code></p></div>)}
-      {timeline ? <Timeline commits={timeline.items} repositoryId={repositoryId} /> : <p className="mt-6 text-muted">Timeline evidence is not available yet.</p>}
+      {timelineLoaded ? <Timeline commits={items} repositoryId={repositoryId} query={query} event={event} onQueryChange={(value) => updateFilters(value, event)} onEventChange={(value) => updateFilters(query, value)} onClearFilters={clearFilters} onLoadOlder={() => void loadOlder()} hasNextPage={pageInfo.hasNextPage} loadingOlder={loadingOlder} mismatch={mismatch} onReloadFromTop={reloadFromTop} /> : <p className="mt-6 font-mono text-sm text-muted" role="status">Loading timeline...</p>}
     </> : <div className={`${ui.alert} mt-6`}><strong>No active snapshot yet.</strong><p>{repository.latestRun ? "The current run is still processing. Open its status page to follow progress." : "Start an import from the home page to create the first snapshot."}</p>{repository.latestRun ? <Link className={`${ui.button} mt-3`} href={`/repositories/${repositoryId}/processing/${repository.latestRun.id}`}>Open {repository.latestRun.kind.toLowerCase()} status</Link> : <Link className={`${ui.button} mt-3`} href="/">Start import</Link>}</div>}
   </>;
 }

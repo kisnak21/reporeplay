@@ -147,3 +147,130 @@ test("does not overflow supported fixture pages", async ({ page }) => {
     expect(overflow, `${path} should not overflow`).toBe(false);
   }
 });
+
+function timelineRepositoryPayload(id: string) {
+  return {
+    data: {
+      id,
+      owner: "acme",
+      name: "ledger",
+      fullName: "acme/ledger",
+      canonicalUrl: "https://github.com/acme/ledger",
+      defaultBranch: "main",
+      selectedAppRoot: "apps/web",
+      availability: "READY",
+      activeSnapshot: {
+        runId: `run-${id}`,
+        rootSha: "aaa1111",
+        headSha: "zzz9999",
+        firstParentCommitCount: 2,
+        firstCommitAt: "2026-09-01T00:00:00Z",
+        lastCommitAt: "2026-09-02T00:00:00Z",
+        processedAt: "2026-09-02T00:00:00Z",
+        routeCount: 1,
+        dependencyCount: 1,
+        versions: { schema: "1", classifier: "1", dependencyDetector: "1", routeDetector: "1" },
+        coverage: { status: "COMPLETE", warnings: [] },
+      },
+      latestRun: null,
+    },
+  };
+}
+
+function timelineItemPayload(shortSha: string, message: string) {
+  return {
+    sha: `${shortSha}full-sha`,
+    shortSha,
+    message,
+    authorName: "Test author",
+    committedAt: "2026-09-02T00:00:00Z",
+    statistics: { changedFiles: 2, additions: 10, deletions: 1 },
+    category: "FEATURE",
+    eventSummary: { routesAdded: 1, routesRemoved: 0, dependenciesAdded: 0, dependenciesRemoved: 0, dependenciesUpdated: 0 },
+    warnings: [],
+  };
+}
+
+function timelinePagePayload(runId: string, items: ReturnType<typeof timelineItemPayload>[], nextCursor: string | null) {
+  return {
+    data: {
+      snapshot: { runId, headSha: "zzz9999" },
+      items,
+      pageInfo: { nextCursor, hasNextPage: nextCursor !== null },
+    },
+  };
+}
+
+test("keeps timeline filters in the URL and sends them to the server", async ({ page }) => {
+  const timelineRequests: string[] = [];
+  await page.route("**/api/repositories/filter-repo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/commits")) {
+      timelineRequests.push(url.toString());
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("run-filter-repo", [timelineItemPayload("feat111", "feat: add account page")], null)) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelineRepositoryPayload("filter-repo")) });
+  });
+
+  await page.goto("/repositories/filter-repo");
+  await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
+
+  await page.getByLabel("Evidence").selectOption("DEPENDENCY");
+  await expect(page).toHaveURL(/event=DEPENDENCY/);
+  await expect.poll(() => timelineRequests.some((requestUrl) => requestUrl.includes("event=DEPENDENCY")), { timeout: 5000 }).toBe(true);
+
+  await page.getByLabel("Keyword").fill("account");
+  await expect(page).toHaveURL(/query=account/);
+});
+
+test("appends older commits with cursor pagination", async ({ page }) => {
+  await page.route("**/api/repositories/paging-repo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/commits")) {
+      if (url.searchParams.get("cursor")) {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("run-paging-repo", [timelineItemPayload("fix2222", "fix: repair checkout\n\nLonger explanation stays out of the summary link.")], null)) });
+      } else {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("run-paging-repo", [timelineItemPayload("feat111", "feat: add account page")], "cursor-page-2")) });
+      }
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelineRepositoryPayload("paging-repo")) });
+  });
+
+  await page.goto("/repositories/paging-repo");
+  await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "fix: repair checkout" })).toBeHidden();
+
+  await page.getByRole("button", { name: "Load older commits" }).click();
+  await expect(page.getByRole("link", { name: "fix: repair checkout" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "fix: repair checkout" })).not.toContainText("Longer explanation");
+});
+
+test("keeps timeline visible when the cursor snapshot changes", async ({ page }) => {
+  await page.route("**/api/repositories/stale-repo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/commits")) {
+      if (url.searchParams.get("cursor")) {
+        await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: { code: "CURSOR_SNAPSHOT_MISMATCH", message: "The active snapshot changed since this timeline was opened. Reload from the top to continue." } }) });
+      } else {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("run-stale-repo", [timelineItemPayload("feat111", "feat: add account page")], "cursor-stale")) });
+      }
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelineRepositoryPayload("stale-repo")) });
+  });
+
+  await page.goto("/repositories/stale-repo");
+  await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Load older commits" }).click();
+  const alert = page.getByRole("alert").filter({ hasText: "Newer snapshot available." });
+  await expect(alert).toContainText("Newer snapshot available.");
+  await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Reload from top" }).click();
+  await expect(alert).toBeHidden();
+  await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
+});

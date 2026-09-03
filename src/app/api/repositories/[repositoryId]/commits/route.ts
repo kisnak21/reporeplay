@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/server/db/client-pool";
-
-function decodeCursor(cursor: string | null): number | null {
-  if (!cursor) return null;
-  try { return Number(Buffer.from(cursor, "base64url").toString()); } catch { return null; }
-}
-function encodeCursor(seq: number): string { return Buffer.from(String(seq)).toString("base64url"); }
+import { decodeTimelineCursor, encodeTimelineCursor } from "@/server/api/timeline-cursor";
 
 export async function GET(request: Request, { params }: { params: Promise<{ repositoryId: string }> }) {
   const { repositoryId } = await params;
   const url = new URL(request.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 30), 1), 100);
-  const cursor = decodeCursor(url.searchParams.get("cursor"));
+  const rawCursor = url.searchParams.get("cursor");
+  const cursor = rawCursor === null ? null : decodeTimelineCursor(rawCursor);
+  if (rawCursor !== null && cursor === null) {
+    return NextResponse.json({ error: { code: "CURSOR_INVALID", message: "The provided cursor is not valid." } }, { status: 400 });
+  }
   const query = url.searchParams.get("query")?.trim() ?? "";
   const category = url.searchParams.get("category")?.trim() ?? "";
   const path = url.searchParams.get("path")?.trim() ?? "";
@@ -22,10 +21,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ repo
   const repo = await pool.query(`SELECT "activeRunId" FROM "Repository" WHERE "id"=$1`, [repositoryId]);
   if (!repo.rows[0]?.activeRunId) return NextResponse.json({ data: { snapshot: null, items: [], pageInfo: { nextCursor: null, hasNextPage: false } } });
   const runId = repo.rows[0].activeRunId;
+  if (cursor !== null && cursor.runId !== runId) {
+    return NextResponse.json({ error: { code: "CURSOR_SNAPSHOT_MISMATCH", message: "The active snapshot changed since this timeline was opened. Reload from the top to continue." } }, { status: 409 });
+  }
   const conditions: string[] = ['c."runId"=$1'];
   const values: unknown[] = [runId];
   let idx = 2;
-  if (cursor !== null) { conditions.push(`c."sequence" < $${idx++}`); values.push(cursor); }
+  if (cursor !== null) { conditions.push(`c."sequence" < $${idx++}`); values.push(cursor.sequence); }
   if (query) { conditions.push(`c."message" ILIKE $${idx++}`); values.push(`%${query}%`); }
   if (category) { conditions.push(`cat."category"=$${idx++}::"CommitCategoryValue"`); values.push(category); }
   if (path) {
@@ -51,7 +53,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ repo
   );
   const hasNext = result.rows.length > limit;
   const items = result.rows.slice(0, limit);
-  const nextCursor = hasNext ? encodeCursor(items[items.length - 1].sequence) : null;
+  const nextCursor = hasNext ? encodeTimelineCursor(runId, items[items.length - 1].sequence) : null;
   const head = await pool.query(`SELECT "headSha" FROM "ProcessingRun" WHERE "id"=$1`, [runId]);
   return NextResponse.json({
     data: {
