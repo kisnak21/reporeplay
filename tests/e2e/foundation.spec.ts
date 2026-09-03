@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+const preflightErrorScenarios = [
+  { code: "UNSUPPORTED_REPOSITORY", title: "Unsupported Next.js application.", message: "No supported Next.js application found.", recovery: "supported app or pages route root" },
+  { code: "REPOSITORY_LIMIT_EXCEEDED", title: "Repository exceeds current limits.", message: "Repository exceeds commit limit.", recovery: "displayed commit and file limits" },
+  { code: "GITHUB_DATA_TRUNCATED", title: "GitHub returned incomplete data.", message: "Repository tree is truncated.", recovery: "No partial import was created" },
+  { code: "GITHUB_RATE_LIMITED", title: "GitHub rate limit reached.", message: "GitHub rate limit exceeded.", recovery: "recorded reset window" },
+] as const;
+
 test("completes the fixture import flow", async ({ page }) => {
   await page.route("**/api/repositories/preflight", async (route) => {
     await route.fulfill({
@@ -51,8 +58,26 @@ test("validates repository URLs", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Public GitHub repository URL").fill("https://example.com/not-github");
   await page.getByRole("button", { name: "Run preflight" }).click();
-  await expect(page.getByText("Enter a public GitHub repository URL")).toBeVisible();
+  await expect(page.locator('[role="alert"]').filter({ hasText: "Invalid repository URL" })).toContainText("Enter a public GitHub repository URL");
 });
+
+for (const scenario of preflightErrorScenarios) {
+  test(`explains ${scenario.code.toLowerCase()} during preflight`, async ({ page }) => {
+    await page.route("**/api/repositories/preflight", async (route) => {
+      const status = scenario.code === "GITHUB_RATE_LIMITED" ? 429 : scenario.code === "GITHUB_DATA_TRUNCATED" ? 502 : 422;
+      await route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: { code: scenario.code, message: scenario.message } }) });
+    });
+    await page.goto("/");
+    await page.getByLabel("Public GitHub repository URL").fill("https://github.com/acme/ledger");
+    await page.getByRole("button", { name: "Run preflight" }).click();
+    const errorPanel = page.locator('[role="alert"]').filter({ hasText: scenario.title });
+    await expect(errorPanel).toContainText(scenario.title);
+    await expect(errorPanel).toContainText(scenario.message);
+    await expect(errorPanel).toContainText(scenario.recovery);
+    await expect(errorPanel).toContainText(scenario.code);
+    await expect(page.getByLabel("Public GitHub repository URL")).toHaveAttribute("aria-invalid", "true");
+  });
+}
 
 test("retries a failed run without creating a new import", async ({ page }) => {
   let retryQueued = false;
