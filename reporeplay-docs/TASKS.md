@@ -2,80 +2,82 @@
 
 Every task is complete only when its acceptance test passes. Tests are built with the feature, not deferred to a final testing epic.
 
+Tracking note (2026-09-03): checked tasks below reflect implementation evidence in the current source and test suite. The latest synchronized slices are timeline pagination and recovery (`31011e7`), commit readability (`20c429a`), and the accessible commit drawer (`527af51`).
+
 ## Epic 1: Contracts and Foundation
 
-- [ ] Initialize the Next.js TypeScript web application.
-- [ ] Add a separately runnable TypeScript worker entry point.
+- [x] Initialize the Next.js TypeScript web application.
+- [x] Add a separately runnable TypeScript worker entry point.
 - [ ] Configure lint, formatting, and typecheck commands.
-- [ ] Configure environment validation for web, worker, database, GitHub App, limits, leases, and throttles.
-- [ ] Configure PostgreSQL and migration tooling.
-- [ ] Configure unit, database integration, API contract, and Playwright test suites.
-- [ ] Encode shared statuses, processing steps, categories, event types, and stable errors.
-- [ ] Add CI that runs migrations, lint, typecheck, and tests.
-- [ ] Add Git fixtures for root, linear, merge, force-push, App Router, Pages Router, router migration, monorepo, malformed manifest, and advanced-route-warning cases.
+- [x] Configure environment validation for web, worker, database, GitHub App, limits, leases, and throttles.
+- [x] Configure PostgreSQL and migration tooling.
+- [x] Configure unit, database integration, API contract, and Playwright test suites.
+- [x] Encode shared statuses, processing steps, categories, event types, and stable errors.
+- [x] Add CI that runs migrations, lint, typecheck, and tests.
+- [x] Add Git fixtures for root, linear, merge, force-push, App Router, Pages Router, router migration, monorepo, malformed manifest, and advanced-route-warning cases.
 - [ ] Document fixture expected outputs in test data.
 
 **Acceptance:** Web and worker boot, an empty database migrates, and CI executes all checks.
 
 ## Epic 2: Persistence Invariants
 
-- [ ] Implement `Repository` with active and previous run pointers.
-- [ ] Implement `ProcessingRun` with frozen source, limits, versions, progress, and errors.
-- [ ] Implement `RunAppRootCandidate`.
-- [ ] Implement `ProcessingJob` with lease and retry fields.
-- [ ] Implement run-scoped commits, files, categories, dependency changes, route changes, and warnings.
-- [ ] Add cascade deletion and retention indexes.
-- [ ] Enforce one nonterminal run per repository with a partial unique index.
-- [ ] Add active-run query helpers that cannot read staged output accidentally.
-- [ ] Add schema invariant integration tests.
+- [x] Implement `Repository` with active and previous run pointers.
+- [x] Implement `ProcessingRun` with frozen source, limits, versions, progress, and errors.
+- [x] Implement `RunAppRootCandidate`.
+- [x] Implement `ProcessingJob` with lease and retry fields.
+- [x] Implement run-scoped commits, files, categories, dependency changes, route changes, and warnings.
+- [x] Add cascade deletion and retention indexes.
+- [x] Enforce one nonterminal run per repository with a partial unique index.
+- [x] Add active-run query helpers that cannot read staged output accidentally.
+- [x] Add schema invariant integration tests.
 
 **Acceptance:** Constraints reject duplicate canonical repositories, duplicate nonterminal runs, duplicate sequence values, and cross-run output mixing.
 
 ## Epic 3: Durable Worker
 
-- [ ] Implement due-job claim with row lock and skip-locked semantics.
-- [ ] Implement worker identity and lease ownership checks.
-- [ ] Implement heartbeat and lease extension.
-- [ ] Implement durable step checkpoints.
-- [ ] Implement bounded attempts, exponential backoff, and jitter.
-- [ ] Implement `WAITING_RATE_LIMIT` scheduling.
-- [ ] Implement expired-lease recovery sweeper.
-- [ ] Implement cooperative cancellation.
-- [ ] Prevent stale lease owners from checkpointing, activating, or recreating deleted data.
+- [x] Implement due-job claim with row lock and skip-locked semantics.
+- [x] Implement worker identity and lease ownership checks.
+- [x] Implement heartbeat and lease extension.
+- [x] Implement durable step checkpoints.
+- [x] Implement bounded attempts, exponential backoff, and jitter.
+- [x] Implement `WAITING_RATE_LIMIT` scheduling.
+- [x] Implement expired-lease recovery sweeper.
+- [x] Implement cooperative cancellation.
+- [x] Prevent stale lease owners from checkpointing, activating, or recreating deleted data.
 - [x] Add queue lag and worker heartbeat health reporting.
-- [ ] Test competing workers, termination, expiry, retry, exhaustion, and cancellation.
+- [x] Test competing workers, termination, expiry, retry, exhaustion, and cancellation.
 
 **Acceptance:** Killing a worker mid-step leads to one resumed result with no duplicate active data.
 
 ## Epic 4: GitHub App Adapter
 
-- [ ] Implement GitHub App installation-token acquisition and refresh.
-- [ ] Implement canonical `github.com/:owner/:repo` parsing and `.git` removal.
-- [ ] Reject alternate hosts, embedded credentials, malformed paths, and unsafe redirects.
-- [ ] Fetch and validate repository metadata.
-- [ ] Fetch default-branch head commit.
-- [ ] Fetch complete trees and detect recursive-tree truncation.
-- [ ] Fetch commits and first-parent details.
-- [ ] Fetch complete first-parent file diffs and detect pagination/truncation.
-- [ ] Fetch file content at an exact SHA.
-- [ ] Normalize upstream errors and rate metadata.
-- [ ] Add adapter contract tests with recorded or mocked GitHub responses.
+- [x] Implement GitHub App installation-token acquisition and refresh.
+- [x] Implement canonical `github.com/:owner/:repo` parsing and `.git` removal.
+- [x] Reject alternate hosts, embedded credentials, malformed paths, and unsafe redirects.
+- [x] Fetch and validate repository metadata.
+- [x] Fetch default-branch head commit.
+- [x] Fetch complete trees and detect recursive-tree truncation.
+- [x] Fetch commits and first-parent details.
+- [x] Fetch complete first-parent file diffs and detect pagination/truncation.
+- [x] Fetch file content at an exact SHA.
+- [x] Normalize upstream errors and rate metadata.
+- [x] Add adapter contract tests with recorded or mocked GitHub responses.
 
 **Acceptance:** The adapter either returns complete validated evidence or a stable typed error.
 
 ## Epic 5: Preflight and Import
 
-- [ ] Implement public limits endpoint.
-- [ ] Count first-parent commits up to configured limit plus one.
-- [ ] Count complete HEAD tree files.
-- [ ] Detect Next.js app-root candidates from manifest and route-root evidence.
-- [ ] Reject missing Next.js dependencies or route roots.
-- [ ] Generate and verify short-lived signed preflight tokens.
-- [ ] Implement preflight endpoint and errors.
-- [ ] Implement canonical repository upsert.
-- [ ] Implement create-or-reuse import transaction.
-- [ ] Implement configuration-required runs.
-- [ ] Implement app-root selection restricted to discovered candidates.
+- [x] Implement public limits endpoint.
+- [x] Count first-parent commits up to configured limit plus one.
+- [x] Count complete HEAD tree files.
+- [x] Detect Next.js app-root candidates from manifest and route-root evidence.
+- [x] Reject missing Next.js dependencies or route roots.
+- [x] Generate and verify short-lived signed preflight tokens.
+- [x] Implement preflight endpoint and errors.
+- [x] Implement canonical repository upsert.
+- [x] Implement create-or-reuse import transaction.
+- [x] Implement configuration-required runs.
+- [x] Implement app-root selection restricted to discovered candidates.
 - [ ] Implement idempotency-key storage and replay behavior.
 - [ ] Implement per-IP import throttling and global run admission.
 - [ ] Test concurrent duplicate imports.
@@ -84,68 +86,68 @@ Every task is complete only when its acceptance test passes. Tests are built wit
 
 ## Epic 6: First-Parent Ingestion
 
-- [ ] Freeze default branch, root SHA, head SHA, counts, app root, limits, and versions.
-- [ ] Traverse head to root using only the first parent.
-- [ ] Reverse traversal into contiguous root-to-head sequence.
-- [ ] Compare root commit with the empty tree.
-- [ ] Compare merge commits with their first parent.
-- [ ] Persist author display name without email fields.
-- [ ] Persist complete changed-file status, rename source, additions, and deletions.
-- [ ] Checkpoint after idempotent commit batches.
-- [ ] Reject chain drift, count mismatch, and incomplete file evidence.
+- [x] Freeze default branch, root SHA, head SHA, counts, app root, limits, and versions.
+- [x] Traverse head to root using only the first parent.
+- [x] Reverse traversal into contiguous root-to-head sequence.
+- [x] Compare root commit with the empty tree.
+- [x] Compare merge commits with their first parent.
+- [x] Persist author display name without email fields.
+- [x] Persist complete changed-file status, rename source, additions, and deletions.
+- [x] Checkpoint after idempotent commit batches.
+- [x] Reject chain drift, count mismatch, and incomplete file evidence.
 - [ ] Test resume at every checkpoint boundary.
 
 **Acceptance:** Fixture histories exactly match expected sequence, parent, and file-diff evidence after clean and interrupted runs.
 
 ## Epic 7: Commit Classification
 
-- [ ] Parse Conventional Commit type and optional scope from the first message line.
-- [ ] Map supported types to documented categories.
-- [ ] Store exactly one category per commit.
-- [ ] Store `UNCATEGORIZED` and source `NONE` for unmatched messages.
-- [ ] Persist classifier version on the run.
-- [ ] Add table-driven parser tests for case, breaking markers, scopes, malformed messages, and merge messages.
+- [x] Parse Conventional Commit type and optional scope from the first message line.
+- [x] Map supported types to documented categories.
+- [x] Store exactly one category per commit.
+- [x] Store `UNCATEGORIZED` and source `NONE` for unmatched messages.
+- [x] Persist classifier version on the run.
+- [x] Add table-driven parser tests for case, breaking markers, scopes, malformed messages, and merge messages.
 
 **Acceptance:** No category is inferred from paths, dependencies, or routes.
 
 ## Epic 8: Dependency Detector
 
-- [ ] Identify changed `package.json` files inside the selected app root.
-- [ ] Read current and first-parent manifests by SHA.
-- [ ] Treat missing manifests as empty maps.
-- [ ] Parse dependencies, devDependencies, peerDependencies, and optionalDependencies.
-- [ ] Compare exact declaration values by manifest, group, and package.
-- [ ] Emit additions, removals, and updates.
-- [ ] Emit removal plus addition when a package changes groups.
-- [ ] Store manifest path on every event.
-- [ ] Create structured warnings for malformed manifests.
-- [ ] Ignore lockfiles explicitly.
-- [ ] Add fixture and database idempotency tests.
+- [x] Identify changed `package.json` files inside the selected app root.
+- [x] Read current and first-parent manifests by SHA.
+- [x] Treat missing manifests as empty maps.
+- [x] Parse dependencies, devDependencies, peerDependencies, and optionalDependencies.
+- [x] Compare exact declaration values by manifest, group, and package.
+- [x] Emit additions, removals, and updates.
+- [x] Emit removal plus addition when a package changes groups.
+- [x] Store manifest path on every event.
+- [x] Create structured warnings for malformed manifests.
+- [x] Ignore lockfiles explicitly.
+- [x] Add fixture and database idempotency tests.
 
 **Acceptance:** Expected manifest transitions and warnings match fixtures exactly.
 
 ## Epic 9: Route Detector
 
-- [ ] Derive route sets from complete adjacent commit trees.
-- [ ] Support `app`, `src/app`, `pages`, and `src/pages` relative to the app root.
-- [ ] Support page and API route files.
-- [ ] Normalize route groups, dynamic segments, catch-all segments, and optional catch-all segments.
-- [ ] Exclude layouts, loading, error, template, and other non-route files.
-- [ ] Emit only route additions and removals.
-- [ ] Preserve route source path and router type.
-- [ ] Emit warnings for parallel routes, intercepting routes, rewrites, redirects, middleware semantics, localization, and ambiguous collisions.
-- [ ] Discard temporary tree state only after safe checkpoint persistence.
-- [ ] Add App Router, Pages Router, migration, root, and warning fixtures.
+- [x] Derive route sets from complete adjacent commit trees.
+- [x] Support `app`, `src/app`, `pages`, and `src/pages` relative to the app root.
+- [x] Support page and API route files.
+- [x] Normalize route groups, dynamic segments, catch-all segments, and optional catch-all segments.
+- [x] Exclude layouts, loading, error, template, and other non-route files.
+- [x] Emit only route additions and removals.
+- [x] Preserve route source path and router type.
+- [x] Emit warnings for parallel routes, intercepting routes, rewrites, redirects, middleware semantics, localization, and ambiguous collisions.
+- [x] Discard temporary tree state only after safe checkpoint persistence.
+- [x] Add App Router, Pages Router, migration, root, and warning fixtures.
 
 **Acceptance:** Route-set differences match fixture expectations and never report file edits as route changes.
 
 ## Epic 10: Run Validation and Activation
 
-- [ ] Validate expected commit count and contiguous sequence.
-- [ ] Validate first-parent relationships and complete file step.
-- [ ] Validate required detector completion and provenance.
-- [ ] Implement atomic active/previous run activation transaction.
-- [ ] Mark run and job success in the activation transaction.
+- [x] Validate expected commit count and contiguous sequence.
+- [x] Validate first-parent relationships and complete file step.
+- [x] Validate required detector completion and provenance.
+- [x] Implement atomic active/previous run activation transaction.
+- [x] Mark run and job success in the activation transaction.
 - [ ] Retain active plus one previous successful run.
 - [ ] Bound failed-run retention.
 - [ ] Test transaction rollback at every activation write.
@@ -155,30 +157,30 @@ Every task is complete only when its acceptance test passes. Tests are built wit
 
 ## Epic 11: Read REST API
 
-- [ ] Implement repository detail with active snapshot, latest run, limits, versions, and coverage.
-- [ ] Implement run-status polling response.
-- [ ] Implement active-run timeline queries newest first.
-- [ ] Implement signed opaque cursor encoding run ID and sequence.
-- [ ] Implement cursor snapshot mismatch response.
-- [ ] Implement keyword, category, path, date, and event filters.
-- [ ] Implement commit evidence endpoint scoped to the active run.
-- [ ] Return relevant run and commit warnings.
+- [x] Implement repository detail with active snapshot, latest run, limits, versions, and coverage.
+- [x] Implement run-status polling response.
+- [x] Implement active-run timeline queries newest first.
+- [x] Implement signed opaque cursor encoding run ID and sequence.
+- [x] Implement cursor snapshot mismatch response.
+- [x] Implement keyword, category, path, date, and event filters.
+- [x] Implement commit evidence endpoint scoped to the active run.
+- [x] Return relevant run and commit warnings.
 - [ ] Add query indexes based on measured plans.
-- [ ] Add API contract and authorization tests.
+- [x] Add API contract and authorization tests.
 
 **Acceptance:** Every response conforms to `API_SPEC.md`, and staged data is unreachable through public reads.
 
 ## Epic 12: Import and Processing UI
 
-- [ ] Build import form with client and server error association.
-- [ ] Load and display backend processing limits.
-- [ ] Build preflight summary and explicit confirmation.
-- [ ] Build app-root selector with evidence paths.
-- [ ] Build processing state UI for every documented status.
-- [ ] Add bounded polling and terminal-state stop.
+- [x] Build import form with client and server error association.
+- [x] Load and display backend processing limits.
+- [x] Build preflight summary and explicit confirmation.
+- [x] Build app-root selector with evidence paths.
+- [x] Build processing state UI for every documented status.
+- [x] Add bounded polling and terminal-state stop.
 - [x] Add retry and cancellation actions with feedback.
 - [ ] Add unsupported, oversized, truncated-source, rate-limit, and failure states.
-- [ ] Announce asynchronous status updates accessibly without moving focus.
+- [x] Announce asynchronous status updates accessibly without moving focus.
 - [ ] Test keyboard, screen-reader names, errors, and mobile reflow.
 
 **Acceptance:** A keyboard-only user can submit, configure, monitor, retry, and enter a completed repository.
@@ -189,26 +191,26 @@ Every task is complete only when its acceptance test passes. Tests are built wit
 - [ ] Display branch, app root, root/head SHA, complete count, dates, and processed time.
 - [ ] Display route and dependency summary counts.
 - [ ] Build coverage summary and warning details.
-- [ ] Build URL-backed timeline filters.
-- [ ] Build cursor loading and snapshot-mismatch recovery.
-- [ ] Build commit summaries with textual event labels.
-- [ ] Build accessible changed-file disclosures.
-- [ ] Preserve filters and scroll position during commit inspection.
-- [ ] Add loading, empty, partial-page error, and confirmed-no-event states.
+- [x] Build URL-backed timeline filters.
+- [x] Build cursor loading and snapshot-mismatch recovery.
+- [x] Build commit summaries with textual event labels.
+- [x] Build accessible changed-file disclosures.
+- [x] Preserve filters and scroll position during commit inspection.
+- [x] Add loading, empty, partial-page error, and confirmed-no-event states.
 - [ ] Test long names, paths, SHAs, and declaration values.
 
 **Acceptance:** A reviewer can find a route or dependency event and identify its commit without leaving the timeline.
 
 ## Epic 14: Commit Evidence UI
 
-- [ ] Implement route-addressable desktop drawer.
-- [ ] Implement mobile full-screen commit route.
-- [ ] Render first-parent metadata and statistics.
-- [ ] Render complete file, dependency, route, category, warning, and provenance sections.
-- [ ] Link to the canonical GitHub commit.
-- [ ] Implement focus entry, trapping, Escape, close labeling, focus return, and browser Back behavior.
-- [ ] Prevent background operation while modal.
-- [ ] Add component and E2E accessibility tests.
+- [x] Implement route-addressable desktop drawer.
+- [x] Implement mobile full-screen commit route.
+- [x] Render first-parent metadata and statistics.
+- [x] Render complete file, dependency, route, category, warning, and provenance sections.
+- [x] Link to the canonical GitHub commit.
+- [x] Implement focus entry, trapping, Escape, close labeling, focus return, and browser Back behavior.
+- [x] Prevent background operation while modal.
+- [x] Add component and E2E accessibility tests.
 
 **Acceptance:** The drawer passes keyboard and accessibility-tree inspection and preserves timeline context.
 
