@@ -148,6 +148,14 @@ test("does not overflow supported fixture pages", async ({ page }) => {
   }
 });
 
+test("wraps warning paths at mobile width", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto("/repositories/demo");
+  await expect(page.getByText("src/app/@modal/(.)photo/[id]/page.tsx", { exact: true })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow, "warning path should wrap at 320px").toBe(false);
+});
+
 function timelineRepositoryPayload(id: string) {
   return {
     data: {
