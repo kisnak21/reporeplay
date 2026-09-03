@@ -62,7 +62,7 @@ test("retries a failed run without creating a new import", async ({ page }) => {
     if (request.method() === "POST" && request.url().endsWith("/api/repositories")) importRequests += 1;
   });
   await page.route("**/api/repositories/retry-repository/runs/retry-run", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: retryQueued ? { id: "retry-run", status: "QUEUED", step: "DISCOVER_HISTORY", fetchedCommits: 0, processedCommits: 0, expectedCommits: 8, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 0, nextAttemptAt: null, warnings: [], error: null } : { id: "retry-run", status: "FAILED", step: "DETECT_ROUTES", fetchedCommits: 8, processedCommits: 8, expectedCommits: 8, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 4, nextAttemptAt: null, warnings: [], error: { code: "GITHUB_UNAVAILABLE", message: "GitHub is temporarily unavailable." } } }) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: retryQueued ? { id: "retry-run", kind: "REFRESH", status: "QUEUED", step: "DISCOVER_HISTORY", fetchedCommits: 0, processedCommits: 0, expectedCommits: 8, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 0, nextAttemptAt: null, warnings: [], error: null } : { id: "retry-run", kind: "REFRESH", status: "FAILED", step: "DETECT_ROUTES", fetchedCommits: 8, processedCommits: 8, expectedCommits: 8, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 4, nextAttemptAt: null, warnings: [], error: { code: "GITHUB_UNAVAILABLE", message: "GitHub is temporarily unavailable." } } }) });
   });
   await page.route("**/api/repositories/retry-repository/runs/retry-run/retry", async (route) => {
     retryRequests += 1;
@@ -72,12 +72,27 @@ test("retries a failed run without creating a new import", async ({ page }) => {
 
   await page.goto("/repositories/retry-repository/processing/retry-run");
   await expect(page.getByRole("button", { name: "Retry run" })).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("previous snapshot remains unchanged");
+  const failureAlert = page.locator('[role="alert"]').filter({ hasText: "Refresh failed" });
+  await expect(failureAlert).toContainText("Refresh failed");
+  await expect(failureAlert).toContainText("GITHUB_UNAVAILABLE");
+  await expect(failureAlert).toContainText("previous successful snapshot remains available");
   await page.getByRole("button", { name: "Retry run" }).click();
   await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
   await expect(page.getByRole("status")).toContainText("Waiting for a worker to claim this run");
   expect(retryRequests).toBe(1);
   expect(importRequests).toBe(0);
+});
+
+test("explains a rate-limited processing run", async ({ page }) => {
+  await page.route("**/api/repositories/rate-limit-repository/runs/rate-limit-run", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { id: "rate-limit-run", kind: "IMPORT", status: "WAITING_RATE_LIMIT", step: "FETCH_COMMITS", fetchedCommits: 8, processedCommits: 8, expectedCommits: 12, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 2, nextAttemptAt: "2026-09-02T01:00:00Z", warnings: [], error: { code: "GITHUB_RATE_LIMITED", message: "GitHub rate limit exceeded." } } }) });
+  });
+
+  await page.goto("/repositories/rate-limit-repository/processing/rate-limit-run");
+  await expect(page.getByRole("status")).toContainText("GitHub rate limit reached");
+  await expect(page.getByRole("status")).toContainText("Saved progress is preserved");
+  await expect(page.getByText(/next attempt/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
 });
 
 test("keeps commit subjects and bodies readable", async ({ page }) => {
