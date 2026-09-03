@@ -242,7 +242,18 @@ export async function completeJob(pool: Pool, job: ClaimedJob): Promise<boolean>
     );
     if (jobResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
     await client.query(`UPDATE "ProcessingRun" SET "status"='SUCCEEDED',"completedAt"=CURRENT_TIMESTAMP,"activatedAt"=CURRENT_TIMESTAMP,"currentStep"='COMPLETE',"checkpointSequence"=(SELECT COALESCE(MAX("sequence"),-1) FROM "RunCommit" WHERE "runId"=$1),"errorCode"=NULL,"errorMessage"=NULL WHERE "id"=$1`, [job.runId]);
-    await client.query(`UPDATE "Repository" SET "previousRunId"="activeRunId","activeRunId"=$1,"availability"='READY',"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$2`, [job.runId, job.repositoryId]);
+    await client.query(
+      `UPDATE "Repository" repository
+       SET "previousRunId"=repository."activeRunId",
+         "activeRunId"=$1,
+         "defaultBranch"=run."defaultBranch",
+         "selectedAppRoot"=run."selectedAppRoot",
+         "availability"='READY',
+         "updatedAt"=CURRENT_TIMESTAMP
+       FROM "ProcessingRun" run
+       WHERE repository."id"=$2 AND run."id"=$1 AND run."repositoryId"=repository."id"`,
+      [job.runId, job.repositoryId],
+    );
     await client.query("COMMIT");
     return true;
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }

@@ -5,7 +5,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ rep
   const { repositoryId } = await params;
   const pool = getPool(process.env.DATABASE_URL!);
   const repo = await pool.query(
-    `SELECT "id","owner","name","fullName","canonicalUrl","defaultBranch","selectedAppRoot","availability","activeRunId","previousRunId" FROM "Repository" WHERE "id"=$1`,
+    `SELECT "id","owner","name","fullName","canonicalUrl","defaultBranch","selectedAppRoot","availability","activeRunId","previousRunId" FROM "Repository" WHERE "id"=$1 AND "deletedAt" IS NULL`,
     [repositoryId],
   );
   if (!repo.rows[0]) return NextResponse.json({ error: { code: "REPOSITORY_NOT_FOUND", message: "Repository not found." } }, { status: 404 });
@@ -50,7 +50,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ rep
       };
     }
   }
-  const latestRun = await pool.query(`SELECT "id","status","kind" FROM "ProcessingRun" WHERE "repositoryId"=$1 ORDER BY "requestedAt" DESC LIMIT 1`, [repositoryId]);
+  const latestRun = await pool.query(`SELECT "id","status","kind","errorCode","errorMessage" FROM "ProcessingRun" WHERE "repositoryId"=$1 ORDER BY "requestedAt" DESC LIMIT 1`, [repositoryId]);
+  const latestRunRow = latestRun.rows[0];
   return NextResponse.json({
     data: {
       id: row.id,
@@ -62,7 +63,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ rep
       selectedAppRoot: row.selectedAppRoot,
       availability: row.availability,
       activeSnapshot,
-      latestRun: latestRun.rows[0] ?? null,
+      latestRun: latestRunRow ? {
+        id: latestRunRow.id,
+        status: latestRunRow.status,
+        kind: latestRunRow.kind,
+        error: latestRunRow.errorCode ? { code: latestRunRow.errorCode, message: latestRunRow.errorMessage } : null,
+      } : null,
     },
   });
 }

@@ -196,7 +196,14 @@ test("wraps warning paths at mobile width", async ({ page }) => {
   expect(overflow, "warning path should wrap at 320px").toBe(false);
 });
 
-function timelineRepositoryPayload(id: string) {
+type TimelineLatestRun = {
+  id: string;
+  status: "NEEDS_CONFIGURATION" | "QUEUED" | "RUNNING" | "WAITING_RATE_LIMIT" | "RETRYABLE" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  kind: "IMPORT" | "REFRESH" | "REPROCESS";
+  error: { code: string; message: string | null } | null;
+} | null;
+
+function timelineRepositoryPayload(id: string, latestRun: TimelineLatestRun = null) {
   return {
     data: {
       id,
@@ -220,10 +227,73 @@ function timelineRepositoryPayload(id: string) {
         versions: { schema: "1", classifier: "1", dependencyDetector: "1", routeDetector: "1" },
         coverage: { status: "COMPLETE", warnings: [] },
       },
-      latestRun: null,
+      latestRun,
     },
   };
 }
+
+test("starts a manual refresh from the active repository", async ({ page }) => {
+  let refreshRequests = 0;
+  await page.route("**/api/repositories/refresh-repo**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === "POST" && url.pathname.endsWith("/refresh")) {
+      refreshRequests += 1;
+      await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ data: { repositoryId: "refresh-repo", run: { id: "refresh-run", status: "QUEUED" } } }) });
+      return;
+    }
+    if (url.pathname.endsWith("/runs/refresh-run")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { id: "refresh-run", kind: "REFRESH", status: "QUEUED", step: "DISCOVER_HISTORY", fetchedCommits: 0, processedCommits: 0, expectedCommits: 2, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 0, nextAttemptAt: null, warnings: [], error: null } }) });
+      return;
+    }
+    if (url.pathname.endsWith("/commits")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("run-refresh-repo", [timelineItemPayload("feat111", "feat: keep active evidence")], null)) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelineRepositoryPayload("refresh-repo")) });
+  });
+
+  await page.goto("/repositories/refresh-repo");
+  await expect(page.getByRole("link", { name: "feat: keep active evidence" })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh from GitHub" }).click();
+  await expect(page).toHaveURL(/repositories\/refresh-repo\/processing\/refresh-run/);
+  expect(refreshRequests).toBe(1);
+});
+
+test("keeps the active timeline visible while a refresh is queued", async ({ page }) => {
+  await page.route("**/api/repositories/queued-refresh-repo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/commits")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("active-snapshot", [timelineItemPayload("feat111", "feat: keep active evidence")], null)) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelineRepositoryPayload("queued-refresh-repo", { id: "queued-refresh", kind: "REFRESH", status: "QUEUED", error: null })) });
+  });
+
+  await page.goto("/repositories/queued-refresh-repo");
+  const refreshStatus = page.getByRole("status").filter({ hasText: "Refresh in progress." });
+  await expect(refreshStatus).toContainText("active snapshot zzz9999");
+  await expect(page.getByRole("link", { name: "feat: keep active evidence" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh in progress" })).toBeDisabled();
+});
+
+test("explains a failed refresh without hiding the active timeline", async ({ page }) => {
+  await page.route("**/api/repositories/failed-refresh-repo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/commits")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("active-snapshot", [timelineItemPayload("feat111", "feat: keep active evidence")], null)) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelineRepositoryPayload("failed-refresh-repo", { id: "failed-refresh", kind: "REFRESH", status: "FAILED", error: { code: "GITHUB_UNAVAILABLE", message: "GitHub is temporarily unavailable." } })) });
+  });
+
+  await page.goto("/repositories/failed-refresh-repo");
+  const refreshError = page.getByRole("alert").filter({ hasText: "Refresh failed." });
+  await expect(refreshError).toContainText("GitHub is temporarily unavailable.");
+  await expect(refreshError).toContainText("Snapshot zzz9999 remains active");
+  await expect(page.getByRole("link", { name: "Review refresh error" })).toHaveAttribute("href", "/repositories/failed-refresh-repo/processing/failed-refresh");
+  await expect(page.getByRole("link", { name: "feat: keep active evidence" })).toBeVisible();
+});
 
 function timelineItemPayload(shortSha: string, message: string) {
   return {
