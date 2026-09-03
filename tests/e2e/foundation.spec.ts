@@ -274,3 +274,65 @@ test("keeps timeline visible when the cursor snapshot changes", async ({ page })
   await expect(alert).toBeHidden();
   await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
 });
+
+function commitDetailPayload() {
+  return {
+    data: {
+      snapshot: { runId: "run-drawer-repo" },
+      sha: "abc1234def5678",
+      shortSha: "abc1234",
+      firstParentSha: "1111111",
+      message: "feat: make retry recovery visible\n\nRetry failures without importing the repository again.",
+      authorName: "Test author",
+      authoredAt: "2026-09-02T00:00:00Z",
+      committedAt: "2026-09-02T00:00:00Z",
+      statistics: { changedFiles: 1, additions: 12, deletions: 3 },
+      category: { value: "FEATURE", source: "CONVENTIONAL_COMMIT" },
+      files: [],
+      dependencyChanges: [],
+      routeChanges: [],
+      warnings: [],
+      externalUrl: "https://github.com/acme/ledger/commit/abc1234def5678",
+    },
+  };
+}
+
+test("opens live commit evidence in an accessible drawer", async ({ page }) => {
+  await page.route("**/api/repositories/drawer-repo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/commits/abc1234")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(commitDetailPayload()) });
+      return;
+    }
+    if (url.pathname.endsWith("/commits")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("run-drawer-repo", [timelineItemPayload("feat111", "feat: add account page")], null)) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelineRepositoryPayload("drawer-repo")) });
+  });
+
+  await page.goto("/repositories/drawer-repo/commits/abc1234");
+  await expect(page.getByRole("dialog", { name: "feat: make retry recovery visible" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+  await expect(page.getByText("Provenance")).toBeVisible();
+  await expect(page.getByText("Retry failures without importing the repository again.", { exact: true })).toBeVisible();
+
+  await page.getByRole("link", { name: "Close evidence" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("link", { name: "Open on GitHub" })).toBeFocused();
+
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow, "drawer should not overflow").toBe(false);
+
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/repositories\/drawer-repo$/);
+  await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
+});
+
+test("supports Escape on the showcase commit drawer", async ({ page }) => {
+  await page.goto("/repositories/demo/commits/9d8e7f6");
+  await expect(page.getByRole("dialog", { name: "feat: add account page" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/repositories\/demo$/);
+});

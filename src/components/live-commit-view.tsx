@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { CommitDetail } from "@/server/contracts/api";
 import { fetchApi } from "@/lib/client-api";
+import { splitCommitMessage } from "@/lib/commit-message";
 import { ui } from "@/lib/ui";
 
 interface LiveCommitViewProps {
@@ -46,11 +47,10 @@ export function LiveCommitView({ repositoryId, sha }: LiveCommitViewProps) {
   if (error && !commit) return <div className={ui.alert} role="alert"><strong>Commit evidence unavailable.</strong><p>{error}</p><div className="mt-3 flex flex-wrap gap-3"><button className={ui.button} onClick={() => setReloadKey((value) => value + 1)} type="button">Retry evidence request</button><Link className={ui.button} href={`/repositories/${repositoryId}`}>Back to repository</Link></div></div>;
   if (!commit) return null;
 
-  const [subject, ...bodyLines] = commit.message.trim().split(/\r?\n/);
-  const body = bodyLines.join("\n").trim();
+  const { subject, body } = splitCommitMessage(commit.message);
 
   return <>
-    <header className={ui.screenHead}><div><p className={ui.eyebrow}>commit / {commit.shortSha}</p><h1 className={ui.commitTitle}>{subject || "Commit message unavailable"}</h1>{body ? <p className={ui.commitBody}>{body}</p> : null}</div><dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2 self-start border-t border-soft pt-3 font-mono text-xs leading-relaxed text-muted"><dt>author</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{commit.authorName ?? "unknown author"}</dd><dt>committed</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{new Date(commit.committedAt).toLocaleString()}</dd><dt>category</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{commit.category.value} / {commit.category.source}</dd></dl></header>
+    <header className={ui.screenHead}><div><p className={ui.eyebrow}>commit / {commit.shortSha}</p><h1 className={ui.commitTitle} id="commit-title" tabIndex={-1}>{subject}</h1>{body ? <p className={ui.commitBody}>{body}</p> : null}</div><dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2 self-start border-t border-soft pt-3 font-mono text-xs leading-relaxed text-muted"><dt>author</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{commit.authorName ?? "unknown author"}</dd><dt>committed</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{new Date(commit.committedAt).toLocaleString()}</dd><dt>category</dt><dd className="m-0 break-words text-right max-[800px]:text-left">{commit.category.value} / {commit.category.source}</dd></dl></header>
     {error ? <p className="mt-4 text-sm text-negative" role="alert">{error}</p> : null}
     <div className="mt-4 flex flex-wrap gap-3"><Link className={ui.button} href={`/repositories/${repositoryId}`}>Close evidence</Link><a className={ui.primaryButton} href={commit.externalUrl}>Open on GitHub</a></div>
     <div className={ui.dataGrid} aria-label="Commit statistics"><Fact label="changed files" value={String(commit.statistics.changedFiles)} /><Fact label="additions" value={`+${commit.statistics.additions}`} /><Fact label="deletions" value={`-${commit.statistics.deletions}`} /><Fact label="first parent" value={commit.firstParentSha?.slice(0, 7) ?? "root commit"} /></div>
@@ -58,6 +58,7 @@ export function LiveCommitView({ repositoryId, sha }: LiveCommitViewProps) {
     <EvidenceSection title="Dependency evidence">{commit.dependencyChanges.length ? <div className="border border-line bg-panel">{commit.dependencyChanges.map((change) => <div className="border-b border-line p-3 last:border-b-0" key={`${change.manifestPath}-${change.packageName}-${change.dependencyGroup}-${change.changeType}`}><strong className="font-mono">{change.changeType} {change.packageName}</strong><p className="m-0 mt-1 font-mono text-xs text-muted">{change.dependencyGroup} · {change.manifestPath} · {change.previousValue ?? "empty"} to {change.currentValue ?? "empty"}</p></div>)}</div> : <p className="text-muted">No declared-dependency transition was recorded.</p>}</EvidenceSection>
     <EvidenceSection title="Route evidence">{commit.routeChanges.length ? <div className="border border-line bg-panel">{commit.routeChanges.map((change) => <div className="border-b border-line p-3 last:border-b-0" key={`${change.sourcePath}-${change.changeType}`}><strong className="font-mono">{change.changeType} {change.route}</strong><p className="m-0 mt-1 font-mono text-xs text-muted">{change.router} {change.routeType} · {change.sourcePath}</p></div>)}</div> : <p className="text-muted">No route-topology transition was recorded.</p>}</EvidenceSection>
     <EvidenceSection title="Coverage warnings">{commit.warnings.length ? commit.warnings.map((warning, index) => <div className={ui.alert} key={`${warning.code}-${warning.path ?? "run"}-${index}`}><strong>{warning.code}</strong><p>{warning.message} <code>{warning.path ?? "detector-wide"}</code></p></div>) : <p className="text-muted">No detector warnings were recorded for this commit.</p>}</EvidenceSection>
+    <EvidenceSection title="Provenance"><p className="m-0 font-mono text-xs leading-loose text-muted">Active snapshot run <code>{commit.snapshot.runId}</code><br />Category source {commit.category.source}</p></EvidenceSection>
   </>;
 }
 
