@@ -29,6 +29,7 @@ export const processingFixture: ProcessingRunView = {
   worker: { status: "HEALTHY", lastHeartbeatAt: "2026-08-31T09:45:00Z", heartbeatAgeSeconds: 4 },
   attemptCount: 1,
   nextAttemptAt: null,
+  appRootCandidates: [],
 };
 
 export const repositoryFixture: RepositoryDetail = {

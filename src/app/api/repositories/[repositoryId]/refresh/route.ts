@@ -79,7 +79,7 @@ export async function POST(
     });
     const result = await enqueueRefreshRun(pool, {
       repositoryId,
-      candidatePaths: preflight.candidates.map((candidate) => candidate.path),
+      candidates: preflight.candidates,
       defaultBranch: preflight.repository.defaultBranch,
       headSha: preflight.headSha,
       expectedCommitCount: preflight.firstParentCommitCount,
@@ -94,19 +94,26 @@ export async function POST(
           { data: { repositoryId, run: { id: result.runId, status: result.outcome } } },
           { status: 202 },
         );
+      case "NEEDS_CONFIGURATION":
+        return NextResponse.json(
+          {
+            data: {
+              repositoryId,
+              run: {
+                id: result.runId,
+                status: result.outcome,
+                appRootCandidates: result.appRootCandidates,
+              },
+            },
+          },
+          { status: 202 },
+        );
       case "NOT_FOUND":
         return errorResponse("REPOSITORY_NOT_FOUND", "Repository not found.");
       case "NO_ACTIVE_SNAPSHOT":
         return errorResponse("RUN_NOT_CONFIGURABLE", "A completed snapshot is required before this repository can be refreshed.");
       case "RUN_ALREADY_ACTIVE":
         return errorResponse("RUN_ALREADY_ACTIVE", "Another run is already active for this repository.");
-      case "CONFIGURATION_REQUIRED":
-        return errorResponse(
-          "CONFIGURATION_REQUIRED",
-          "The selected application root was not found at the current HEAD. Select a current application root before refreshing.",
-          409,
-          { candidates: preflight.candidates },
-        );
     }
   } catch (error) {
     if (error instanceof RepoReplayError) {

@@ -14,6 +14,11 @@
     "success": { "status": 202, "required": ["repositoryId", "run"] },
     "errors": ["RUN_ALREADY_ACTIVE", "REPOSITORY_LIMIT_EXCEEDED"]
   },
+  "configuration": {
+    "request": { "appRoot": "apps/web" },
+    "success": { "status": 202, "required": ["repositoryId", "runId", "status", "selectedAppRoot"] },
+    "errors": ["REPOSITORY_NOT_FOUND", "RUN_NOT_FOUND", "RUN_NOT_CONFIGURABLE", "INVALID_APP_ROOT_SELECTION"]
+  },
   "retry": {
     "request": {},
     "success": { "status": 202, "required": ["repositoryId", "runId", "status"] },

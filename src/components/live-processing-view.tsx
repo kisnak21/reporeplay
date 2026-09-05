@@ -66,6 +66,8 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
+  const [selectedAppRoot, setSelectedAppRoot] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -80,7 +82,13 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
         setRun(nextRun);
         setError("");
         setLoading(false);
-        if (!isTerminal(nextRun.status)) timer = window.setTimeout(() => void pollRun(), POLL_DELAY_MS);
+        if (nextRun.status === "NEEDS_CONFIGURATION") {
+          setSelectedAppRoot((current) => nextRun.appRootCandidates.some((candidate) => candidate.path === current)
+            ? current
+            : nextRun.appRootCandidates[0]?.path ?? "");
+        } else if (!isTerminal(nextRun.status)) {
+          timer = window.setTimeout(() => void pollRun(), POLL_DELAY_MS);
+        }
       } catch (caught: unknown) {
         if (!mounted || controller.signal.aborted) return;
         setLoading(false);
@@ -122,11 +130,45 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
     }
   }
 
+  async function configureAppRoot(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!selectedAppRoot || configuring) return;
+    setConfiguring(true);
+    setError("");
+
+    try {
+      await fetchApi(`/api/repositories/${repositoryId}/runs/${runId}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ appRoot: selectedAppRoot }),
+      });
+      setRun((current) => current ? { ...current, status: "QUEUED", appRootCandidates: [] } : current);
+      setReloadKey((value) => value + 1);
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : "The application root could not be saved.");
+    } finally {
+      setConfiguring(false);
+    }
+  }
+
   if (loading && !run) return <p className="font-mono text-sm text-muted" role="status">Loading run status...</p>;
   if (error && !run) return <div className={ui.alert} role="alert"><strong>Run status unavailable.</strong><p>{error}</p><button className={`${ui.button} mt-3`} onClick={() => setReloadKey((value) => value + 1)} type="button">Retry status request</button></div>;
   if (!run) return null;
 
   const canCancel = ["QUEUED", "RUNNING", "WAITING_RATE_LIMIT", "RETRYABLE"].includes(run.status);
   const canRetry = run.status === "FAILED";
-  return <section aria-labelledby="processing-title"><header className={ui.screenHead}><div><p className={ui.eyebrow}>run {run.id.slice(0, 7)} / {run.kind ?? "IMPORT"}</p><h1 className={ui.sectionTitle} id="processing-title">Processing durable evidence.</h1></div><p className="m-0 text-muted"><code>repository {repositoryId.slice(0, 7)}</code><br /><code>{run.step === "FETCH_COMMITS" ? run.fetchedCommits : run.processedCommits} / {run.expectedCommits ?? "?"} commits</code><br /><code>{run.status}</code></p></header>{run.status === "FAILED" ? <div className={`${ui.alert} mt-4`} role="alert"><strong>{run.kind === "REFRESH" ? "Refresh failed." : "Import failed."}</strong><p>{run.error?.message ?? "The processing run could not complete."}</p><p>{run.kind === "REFRESH" ? "The previous successful snapshot remains available and unchanged." : "No staged output was activated."}</p>{run.error?.code ? <p className="font-mono text-xs">Error code: <code className="break-all">{run.error.code}</code></p> : null}</div> : null}<div className="mt-8 grid grid-cols-[minmax(0,1fr)_20rem] gap-8 max-[800px]:grid-cols-1"><div><div className="border border-line bg-[#090d0f]" aria-label="Processing steps">{PROCESSING_STEPS.map((step, index) => { const state = getStepState(run, index); return <div className={`grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 border-b border-soft p-4 font-mono text-xs last:border-b-0 max-[560px]:grid-cols-1 ${state === "active" ? "bg-[#1d1a12]" : ""}`} key={step.key} aria-current={state === "active" ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><strong>{step.label}</strong><span className={state === "complete" ? ui.positive : state === "active" ? ui.signal : state === "stopped" ? ui.negative : ui.muted}>{getStepValue(run, step.key, state)}</span></div>; })}</div><p className="mt-3 font-mono text-xs text-muted" role="status" aria-live="polite">{retrying ? "Retry requested. Waiting for the worker to claim this run." : getStatusMessage(run)}</p>{error ? <p className="mt-2 text-sm text-negative" role="alert">{error}</p> : null}</div><aside className={ui.terminal}><div className={ui.terminalHeader}><span>run state</span><span className={run.status === "FAILED" || run.status === "CANCELLED" ? ui.negative : run.status === "SUCCEEDED" ? ui.positive : ui.signal}>{run.status.toLowerCase()}</span></div><div className={ui.terminalBody}><div>attempt {run.attemptCount}</div><div>step {run.step}</div><div>worker {run.worker.status.toLowerCase()}</div><div>{run.worker.heartbeatAgeSeconds === null ? "heartbeat unavailable" : `heartbeat ${Math.round(run.worker.heartbeatAgeSeconds)}s ago`}</div><div>{run.warnings?.length ?? 0} warnings recorded</div>{run.nextAttemptAt ? <div>next attempt {new Date(run.nextAttemptAt).toLocaleString()}</div> : null}</div><div className="flex flex-col gap-3 px-4 pb-4">{canCancel ? <button className={ui.button} disabled={cancelling} onClick={() => void cancelRun()} type="button">{cancelling ? "Cancelling..." : "Cancel run"}</button> : null}{canRetry ? <button className={ui.button} disabled={retrying} onClick={() => void retryRun()} type="button">{retrying ? "Retrying..." : "Retry run"}</button> : null}<Link className={ui.primaryButton} href={`/repositories/${repositoryId}`}>{run.status === "SUCCEEDED" ? "View repository" : "Open repository"}</Link></div></aside></div></section>;
+  const needsConfiguration = run.status === "NEEDS_CONFIGURATION";
+
+  return <section aria-labelledby="processing-title"><header className={ui.screenHead}><div><p className={ui.eyebrow}>run {run.id.slice(0, 7)} / {run.kind ?? "IMPORT"}</p><h1 className={ui.sectionTitle} id="processing-title">{needsConfiguration ? "Select an application root." : "Processing durable evidence."}</h1></div><p className="m-0 text-muted"><code>repository {repositoryId.slice(0, 7)}</code><br /><code>{run.step === "FETCH_COMMITS" ? run.fetchedCommits : run.processedCommits} / {run.expectedCommits ?? "?"} commits</code><br /><code>{run.status}</code></p></header>{run.status === "FAILED" ? <div className={`${ui.alert} mt-4`} role="alert"><strong>{run.kind === "REFRESH" ? "Refresh failed." : "Import failed."}</strong><p>{run.error?.message ?? "The processing run could not complete."}</p><p>{run.kind === "REFRESH" ? "The previous successful snapshot remains available and unchanged." : "No staged output was activated."}</p>{run.error?.code ? <p className="font-mono text-xs">Error code: <code className="break-all">{run.error.code}</code></p> : null}</div> : null}<div className="mt-8 grid grid-cols-[minmax(0,1fr)_20rem] gap-8 max-[800px]:grid-cols-1"><div>{needsConfiguration ? <AppRootConfiguration candidates={run.appRootCandidates} configuring={configuring} kind={run.kind} onChange={setSelectedAppRoot} onSubmit={configureAppRoot} selectedAppRoot={selectedAppRoot} /> : <div className="border border-line bg-[#090d0f]" aria-label="Processing steps">{PROCESSING_STEPS.map((step, index) => { const state = getStepState(run, index); return <div className={`grid grid-cols-[3rem_minmax(0,1fr)_auto] gap-4 border-b border-soft p-4 font-mono text-xs last:border-b-0 max-[560px]:grid-cols-1 ${state === "active" ? "bg-[#1d1a12]" : ""}`} key={step.key} aria-current={state === "active" ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span><strong>{step.label}</strong><span className={state === "complete" ? ui.positive : state === "active" ? ui.signal : state === "stopped" ? ui.negative : ui.muted}>{getStepValue(run, step.key, state)}</span></div>; })}</div>}<p className="mt-3 font-mono text-xs text-muted" role="status" aria-live="polite">{configuring ? "Saving application root." : retrying ? "Retry requested. Waiting for the worker to claim this run." : getStatusMessage(run)}</p>{error ? <p className="mt-2 text-sm text-negative" role="alert">{error}</p> : null}</div><aside className={ui.terminal}><div className={ui.terminalHeader}><span>run state</span><span className={run.status === "FAILED" || run.status === "CANCELLED" ? ui.negative : run.status === "SUCCEEDED" ? ui.positive : ui.signal}>{run.status.toLowerCase()}</span></div><div className={ui.terminalBody}>{needsConfiguration ? <><div>{run.appRootCandidates.length} {run.appRootCandidates.length === 1 ? "root" : "roots"} discovered</div><div>snapshot unchanged</div></> : <><div>attempt {run.attemptCount}</div><div>step {run.step}</div><div>worker {run.worker.status.toLowerCase()}</div><div>{run.worker.heartbeatAgeSeconds === null ? "heartbeat unavailable" : `heartbeat ${Math.round(run.worker.heartbeatAgeSeconds)}s ago`}</div><div>{run.warnings?.length ?? 0} warnings recorded</div>{run.nextAttemptAt ? <div>next attempt {new Date(run.nextAttemptAt).toLocaleString()}</div> : null}</>}</div><div className="flex flex-col gap-3 px-4 pb-4">{canCancel ? <button className={ui.button} disabled={cancelling} onClick={() => void cancelRun()} type="button">{cancelling ? "Cancelling..." : "Cancel run"}</button> : null}{canRetry ? <button className={ui.button} disabled={retrying} onClick={() => void retryRun()} type="button">{retrying ? "Retrying..." : "Retry run"}</button> : null}<Link className={ui.primaryButton} href={`/repositories/${repositoryId}`}>{run.status === "SUCCEEDED" ? "View repository" : "Open repository"}</Link></div></aside></div></section>;
+}
+
+function AppRootConfiguration({ candidates, configuring, kind, onChange, onSubmit, selectedAppRoot }: {
+  candidates: ProcessingRunView["appRootCandidates"];
+  configuring: boolean;
+  kind: ProcessingRunView["kind"];
+  onChange: (value: string) => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  selectedAppRoot: string;
+}) {
+  return <section className="border border-line bg-[#090d0f] p-5" aria-labelledby="app-root-title"><h2 className="m-0 text-xl font-semibold" id="app-root-title">Choose the app whose history should continue.</h2><p className="mt-2 max-w-[70ch] text-muted">{kind === "REFRESH" ? "GitHub's current HEAD no longer contains the previous root. The active snapshot remains readable until the selected root finishes processing." : "Processing starts only after one discovered root is selected."}</p>{candidates.length === 0 ? <div className={ui.alert} role="alert"><strong>Candidate evidence unavailable.</strong><p>Reload the run status before continuing.</p></div> : <form className="mt-5" onSubmit={onSubmit}><fieldset className="m-0 border-0 p-0" disabled={configuring}><legend className="mb-2 font-mono text-xs uppercase text-cyan">Discovered application roots</legend><div className="grid gap-2">{candidates.map((candidate, index) => { const evidenceId = `app-root-evidence-${index}`; return <label className="grid min-h-11 grid-cols-[auto_minmax(0,1fr)] items-center gap-4 border border-line bg-panel p-4" key={candidate.path}><input aria-describedby={evidenceId} checked={selectedAppRoot === candidate.path} name="appRoot" onChange={() => onChange(candidate.path)} required type="radio" value={candidate.path} /><span className="min-w-0"><code className="break-all text-ink">{candidate.path}</code><small className="mt-1 block break-all font-mono text-muted" id={evidenceId}>{candidate.manifestPath}<br />routes: {candidate.routeRoots.join(", ")}</small></span></label>; })}</div><button className={`${ui.primaryButton} mt-4 w-full disabled:cursor-wait disabled:opacity-60`} disabled={!selectedAppRoot || configuring} type="submit">{configuring ? "Saving selection..." : "Queue selected root"}</button></fieldset></form>}</section>;
 }

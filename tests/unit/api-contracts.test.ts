@@ -10,6 +10,7 @@ interface ApiContracts {
   preflight: ContractFixture;
   timeline: ContractFixture;
   refresh: ContractFixture;
+  configuration: ContractFixture;
   retry: ContractFixture;
 }
 

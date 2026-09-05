@@ -372,12 +372,11 @@ Conflicts:
 
 ```text
 409 RUN_ALREADY_ACTIVE
-409 CONFIGURATION_REQUIRED
 422 REPOSITORY_LIMIT_EXCEEDED
 422 UNSUPPORTED_REPOSITORY
 ```
 
-If root selection becomes ambiguous, the refresh run enters `NEEDS_CONFIGURATION` without altering the repository's current selection or active snapshot.
+If root selection becomes ambiguous, the server returns `202 Accepted` with a refresh run in `NEEDS_CONFIGURATION` and its `appRootCandidates`. No processing job exists until a candidate is selected through the configuration endpoint. The repository's current selection and active snapshot remain unchanged until the configured run activates successfully.
 
 ## 11. Retry and Cancel
 

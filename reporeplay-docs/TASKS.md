@@ -2,7 +2,7 @@
 
 Every task is complete only when its acceptance test passes. Tests are built with the feature, not deferred to a final testing epic.
 
-Tracking note (2026-09-03): checked tasks below reflect implementation evidence in the current source and test suite. The latest synchronized slices are timeline pagination and recovery (`31011e7`), commit readability (`20c429a`), the accessible commit drawer (`527af51`), accessibility remediation (`0cc6ec4`), processing recovery states (`6a95f4c`), and manual refresh with retained snapshots.
+Tracking note (2026-09-05): checked tasks below reflect implementation evidence in the current source and test suite. The latest synchronized slices are timeline pagination and recovery (`31011e7`), commit readability (`20c429a`), the accessible commit drawer (`527af51`), accessibility remediation (`0cc6ec4`), processing recovery states (`6a95f4c`), manual refresh with retained snapshots (`0840967`), and ambiguous-root refresh configuration.
 
 ## Epic 1: Contracts and Foundation
 
@@ -218,7 +218,7 @@ Tracking note (2026-09-03): checked tasks below reflect implementation evidence 
 
 - [x] Implement manual refresh preflight.
 - [x] Preserve the active snapshot during every refresh state.
-- [ ] Implement ambiguous-root refresh configuration.
+- [x] Implement ambiguous-root refresh configuration.
 - [x] Implement refresh retry and cancellation endpoints.
 - [x] Implement failed-refresh messaging and retained-snapshot evidence.
 - [ ] Implement protected permanent deletion.

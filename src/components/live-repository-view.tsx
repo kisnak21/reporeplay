@@ -190,7 +190,7 @@ export function LiveRepositoryView({ repositoryId }: LiveRepositoryViewProps) {
     setRefreshError("");
 
     try {
-      const result = await fetchApi<{ repositoryId: string; run: { id: string; status: "QUEUED" } }>(
+      const result = await fetchApi<{ repositoryId: string; run: { id: string; status: "QUEUED" | "NEEDS_CONFIGURATION" } }>(
         `/api/repositories/${repositoryId}/refresh`,
         { method: "POST" },
       );

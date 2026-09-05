@@ -15,6 +15,8 @@ export interface AppRootCandidate {
   routeFileCount: number;
 }
 
+export type RunAppRootCandidate = Omit<AppRootCandidate, "routeFileCount">;
+
 export interface PreflightResult {
   repository: { externalId: string; fullName: string; defaultBranch: string; headSha: string };
   firstParentCommitCount: number;
@@ -42,6 +44,7 @@ export interface ProcessingRunView {
   worker: { status: WorkerHealthState; lastHeartbeatAt: string | null; heartbeatAgeSeconds: number | null };
   attemptCount: number;
   nextAttemptAt: string | null;
+  appRootCandidates: RunAppRootCandidate[];
   warnings?: CoverageWarning[];
   error?: { code: string; message: string | null } | null;
 }

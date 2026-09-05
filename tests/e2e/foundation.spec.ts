@@ -120,6 +120,58 @@ test("explains a rate-limited processing run", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
 });
 
+test("configures an ambiguous refresh and queues the same run", async ({ page }) => {
+  let configured = false;
+  let selectedRoot = "";
+  await page.route("**/api/repositories/configuration-repository/runs/configuration-run**", async (route) => {
+    const request = route.request();
+    if (request.method() === "PUT") {
+      const body = request.postDataJSON() as { appRoot: string };
+      selectedRoot = body.appRoot;
+      configured = true;
+      await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ data: { repositoryId: "configuration-repository", runId: "configuration-run", status: "QUEUED", selectedAppRoot: selectedRoot } }) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { id: "configuration-run", kind: "REFRESH", status: configured ? "QUEUED" : "NEEDS_CONFIGURATION", step: "DISCOVER_HISTORY", fetchedCommits: 0, processedCommits: 0, expectedCommits: 12, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-05T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 0, nextAttemptAt: null, appRootCandidates: configured ? [] : [{ path: "apps/admin", manifestPath: "apps/admin/package.json", routeRoots: ["pages"] }, { path: "apps/storefront-with-a-very-long-name", manifestPath: "apps/storefront-with-a-very-long-name/package.json", routeRoots: ["src/app"] }], warnings: [], error: null } }) });
+  });
+
+  await page.goto("/repositories/configuration-repository/processing/configuration-run");
+  await expect(page.getByRole("heading", { level: 1, name: "Select an application root." })).toBeVisible();
+  await expect(page.getByText("The active snapshot remains readable", { exact: false })).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 900 });
+  const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(hasHorizontalOverflow).toBe(false);
+
+  const selectedOption = page.getByLabel(/apps\/storefront-with-a-very-long-name/);
+  await selectedOption.focus();
+  await page.keyboard.press("Space");
+  await expect(selectedOption).toBeChecked();
+  await page.getByRole("button", { name: "Queue selected root" }).click();
+
+  await expect(page.getByRole("heading", { level: 1, name: "Processing durable evidence." })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Waiting for a worker to claim this run");
+  await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
+  expect(selectedRoot).toBe("apps/storefront-with-a-very-long-name");
+});
+
+test("keeps the root selection available after a configuration error", async ({ page }) => {
+  await page.route("**/api/repositories/configuration-error-repository/runs/configuration-error-run**", async (route) => {
+    if (route.request().method() === "PUT") {
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "INVALID_APP_ROOT_SELECTION", message: "Select an application root discovered by this run's preflight." } }) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { id: "configuration-error-run", kind: "REFRESH", status: "NEEDS_CONFIGURATION", step: "DISCOVER_HISTORY", fetchedCommits: 0, processedCommits: 0, expectedCommits: 12, worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-05T00:00:00Z", heartbeatAgeSeconds: 2 }, attemptCount: 0, nextAttemptAt: null, appRootCandidates: [{ path: "apps/admin", manifestPath: "apps/admin/package.json", routeRoots: ["pages"] }], warnings: [], error: null } }) });
+  });
+
+  await page.goto("/repositories/configuration-error-repository/processing/configuration-error-run");
+  const rootOption = page.getByLabel(/apps\/admin/);
+  await expect(rootOption).toBeChecked();
+  await page.getByRole("button", { name: "Queue selected root" }).click();
+  await expect(page.locator('[role="alert"]').filter({ hasText: "Select an application root discovered by this run's preflight." })).toBeVisible();
+  await expect(rootOption).toBeChecked();
+  await expect(page.getByRole("heading", { level: 1, name: "Select an application root." })).toBeVisible();
+});
+
 test("keeps commit subjects and bodies readable", async ({ page }) => {
   await page.route("**/api/repositories/readability-repo/commits/abc1234", async (route) => {
     await route.fulfill({
