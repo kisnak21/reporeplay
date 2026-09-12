@@ -1,4 +1,5 @@
-import type { Pool } from "pg";
+import { inTransaction, type Database } from "@/server/db/transaction";
+import { admitProcessingRun } from "@/server/security/import-controls";
 
 const NONTERMINAL_RUN_STATUSES = [
   "NEEDS_CONFIGURATION",
@@ -17,6 +18,7 @@ export interface RefreshRunInput {
   headFileCount: number;
   maxCommitLimit: number;
   maxHeadFileLimit: number;
+  maxPendingRuns?: number;
 }
 
 export interface RefreshAppRootCandidate {
@@ -28,7 +30,9 @@ export interface RefreshAppRootCandidate {
 export type EnqueueRefreshResult =
   | { outcome: "QUEUED"; runId: string }
   | { outcome: "NEEDS_CONFIGURATION"; runId: string; appRootCandidates: RefreshAppRootCandidate[] }
-  | { outcome: "NOT_FOUND" | "NO_ACTIVE_SNAPSHOT" | "RUN_ALREADY_ACTIVE" };
+  | { outcome: "NOT_FOUND" }
+  | { outcome: "NO_ACTIVE_SNAPSHOT" }
+  | { outcome: "RUN_ALREADY_ACTIVE" };
 
 export type ConfigureRefreshResult =
   | { outcome: "QUEUED" }
@@ -39,11 +43,8 @@ interface RepositoryRefreshState {
   selectedAppRoot: string | null;
 }
 
-export async function enqueueRefreshRun(pool: Pool, input: RefreshRunInput): Promise<EnqueueRefreshResult> {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+export async function enqueueRefreshRun(database: Database, input: RefreshRunInput): Promise<EnqueueRefreshResult> {
+  return inTransaction(database, async (client) => {
     const repositoryResult = await client.query<RepositoryRefreshState>(
       `SELECT "activeRunId","selectedAppRoot"
        FROM "Repository"
@@ -54,11 +55,9 @@ export async function enqueueRefreshRun(pool: Pool, input: RefreshRunInput): Pro
     const repository = repositoryResult.rows[0];
 
     if (!repository) {
-      await client.query("ROLLBACK");
       return { outcome: "NOT_FOUND" };
     }
     if (!repository.activeRunId) {
-      await client.query("ROLLBACK");
       return { outcome: "NO_ACTIVE_SNAPSHOT" };
     }
 
@@ -70,10 +69,10 @@ export async function enqueueRefreshRun(pool: Pool, input: RefreshRunInput): Pro
       [input.repositoryId, NONTERMINAL_RUN_STATUSES],
     );
     if (activeRunResult.rows[0]) {
-      await client.query("ROLLBACK");
       return { outcome: "RUN_ALREADY_ACTIVE" };
     }
 
+    await admitProcessingRun(client, input.maxPendingRuns);
     const selectedAppRoot = repository.selectedAppRoot && input.candidates.some((candidate) => candidate.path === repository.selectedAppRoot)
       ? repository.selectedAppRoot
       : null;
@@ -117,28 +116,19 @@ export async function enqueueRefreshRun(pool: Pool, input: RefreshRunInput): Pro
       }
     }
 
-    await client.query("COMMIT");
     return selectedAppRoot
       ? { outcome: "QUEUED", runId }
       : { outcome: "NEEDS_CONFIGURATION", runId, appRootCandidates: input.candidates };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function configureRunAppRoot(
-  pool: Pool,
+  database: Database,
   repositoryId: string,
   runId: string,
   appRoot: string,
 ): Promise<ConfigureRefreshResult> {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+  return inTransaction(database, async (client) => {
     const repositoryResult = await client.query<{ activeRunId: string | null }>(
       `SELECT "activeRunId"
        FROM "Repository"
@@ -148,7 +138,6 @@ export async function configureRunAppRoot(
     );
     const repository = repositoryResult.rows[0];
     if (!repository) {
-      await client.query("ROLLBACK");
       return { outcome: "NOT_FOUND" };
     }
 
@@ -161,11 +150,9 @@ export async function configureRunAppRoot(
     );
     const run = runResult.rows[0];
     if (!run) {
-      await client.query("ROLLBACK");
       return { outcome: "RUN_NOT_FOUND" };
     }
     if (run.status !== "NEEDS_CONFIGURATION") {
-      await client.query("ROLLBACK");
       return { outcome: "RUN_NOT_CONFIGURABLE" };
     }
 
@@ -174,7 +161,6 @@ export async function configureRunAppRoot(
       [runId, appRoot],
     );
     if (!candidateResult.rows[0]) {
-      await client.query("ROLLBACK");
       return { outcome: "INVALID_APP_ROOT_SELECTION" };
     }
 
@@ -197,12 +183,6 @@ export async function configureRunAppRoot(
       );
     }
 
-    await client.query("COMMIT");
     return { outcome: "QUEUED" };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }

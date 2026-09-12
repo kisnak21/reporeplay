@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { ProcessingRunView } from "@/server/contracts/api";
 import { fetchApi } from "@/lib/client-api";
 import { ui } from "@/lib/ui";
+import { createMutationRequest } from "@/lib/idempotent-request";
 
 const POLL_DELAY_MS = 2_000;
 const PROCESSING_STEPS: Array<{ key: ProcessingRunView["step"]; label: string }> = [
@@ -61,6 +62,7 @@ function getStepState(run: ProcessingRunView, index: number): "complete" | "acti
 }
 
 export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewProps) {
+  const [mutate] = useState(createMutationRequest);
   const [run, setRun] = useState<ProcessingRunView | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -108,7 +110,7 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
     setCancelling(true);
     setError("");
     try {
-      await fetchApi(`/api/repositories/${repositoryId}/runs/${runId}/cancel`, { method: "POST" });
+      await mutate(`/api/repositories/${repositoryId}/runs/${runId}/cancel`, { method: "POST" });
       setReloadKey((value) => value + 1);
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : "The run could not be cancelled.");
@@ -121,7 +123,7 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
     setRetrying(true);
     setError("");
     try {
-      await fetchApi(`/api/repositories/${repositoryId}/runs/${runId}/retry`, { method: "POST" });
+      await mutate(`/api/repositories/${repositoryId}/runs/${runId}/retry`, { method: "POST" });
       setReloadKey((value) => value + 1);
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : "The run could not be queued for retry.");
@@ -137,7 +139,7 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
     setError("");
 
     try {
-      await fetchApi(`/api/repositories/${repositoryId}/runs/${runId}/configuration`, {
+      await mutate(`/api/repositories/${repositoryId}/runs/${runId}/configuration`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ appRoot: selectedAppRoot }),
@@ -155,7 +157,7 @@ export function LiveProcessingView({ repositoryId, runId }: LiveProcessingViewPr
   if (error && !run) return <div className={ui.alert} role="alert"><strong>Run status unavailable.</strong><p>{error}</p><button className={`${ui.button} mt-3`} onClick={() => setReloadKey((value) => value + 1)} type="button">Retry status request</button></div>;
   if (!run) return null;
 
-  const canCancel = ["QUEUED", "RUNNING", "WAITING_RATE_LIMIT", "RETRYABLE"].includes(run.status);
+  const canCancel = ["NEEDS_CONFIGURATION", "QUEUED", "RUNNING", "WAITING_RATE_LIMIT", "RETRYABLE"].includes(run.status);
   const canRetry = run.status === "FAILED";
   const needsConfiguration = run.status === "NEEDS_CONFIGURATION";
 

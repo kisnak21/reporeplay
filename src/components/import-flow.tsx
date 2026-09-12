@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ui } from "@/lib/ui";
 import type { PreflightResult, PublicLimits } from "@/server/contracts/api";
+import { ApiError } from "@/lib/client-api";
+import { createMutationRequest } from "@/lib/idempotent-request";
 
 type Stage = "IMPORT" | "PREFLIGHT";
 
@@ -21,11 +23,19 @@ function errorFromPayload(payload: ErrorPayload, fallback: string): FlowError {
 }
 
 function errorFromUnknown(caught: unknown, fallback: string): FlowError {
+  if (caught instanceof ApiError) return { code: caught.code ?? "REQUEST_FAILED", message: caught.message };
   return { code: "REQUEST_FAILED", message: caught instanceof Error ? caught.message : fallback };
 }
 
 function errorPresentation(code: string): { title: string; recovery: string } {
   switch (code) {
+    case "PREFLIGHT_TOKEN_INVALID":
+    case "PREFLIGHT_TOKEN_EXPIRED":
+      return { title: "Preflight needs to be repeated.", recovery: "Run preflight again to confirm the current repository evidence." };
+    case "IMPORT_RATE_LIMITED":
+      return { title: "Too many import requests.", recovery: "Wait for the request window to reset, then try again." };
+    case "GLOBAL_RUN_LIMITED":
+      return { title: "Processing capacity is full.", recovery: "Try again after an existing run finishes." };
     case "INVALID_REPOSITORY_URL":
       return { title: "Invalid repository URL.", recovery: "Enter a public GitHub repository URL in the form github.com/owner/repository." };
     case "REPOSITORY_NOT_FOUND":
@@ -49,6 +59,7 @@ function errorPresentation(code: string): { title: string; recovery: string } {
 
 export function ImportFlow() {
   const router = useRouter();
+  const [sendImport] = useState(createMutationRequest);
   const [limits, setLimits] = useState<PublicLimits | null>(null);
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [stage, setStage] = useState<Stage>("IMPORT");
@@ -72,12 +83,12 @@ export function ImportFlow() {
         setError(errorFromPayload(json, "Preflight failed."));
         return;
       }
-      if (!json.data) {
+      if (!json.data?.preflightToken) {
         setError({ code: "REQUEST_FAILED", message: "Preflight returned an incomplete response." });
         return;
       }
       setPreflight(json.data);
-      setSelectedRoot(json.data.appRootCandidates[0]?.path ?? "");
+      setSelectedRoot(json.data.appRootCandidates.length === 1 ? json.data.appRootCandidates[0].path : "");
       setStage("PREFLIGHT");
     } catch (e: unknown) {
       setError(errorFromUnknown(e, "Preflight failed."));
@@ -88,23 +99,24 @@ export function ImportFlow() {
 
   async function queueRepository(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await queueImport(selectedRoot || undefined);
+  }
+
+  async function queueImport(appRoot?: string) {
+    if (!preflight || loading) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/repositories", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, appRoot: selectedRoot || undefined }) });
-      const json = await res.json() as ErrorPayload & { data?: { repositoryId: string; runId: string } };
-      if (!res.ok) {
-        setError(errorFromPayload(json, "Import failed."));
-        return;
-      }
-      if (!json.data) {
-        setError({ code: "REQUEST_FAILED", message: "Import returned an incomplete response." });
-        return;
-      }
-      const { repositoryId, runId } = json.data;
-      router.push(`/repositories/${repositoryId}/processing/${runId}`);
+      const result = await sendImport<{ repositoryId: string; availability: string; run?: { id: string } }>("/api/repositories", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ preflightToken: preflight.preflightToken, ...(appRoot ? { appRoot } : {}) }),
+      });
+      if (result.availability === "READY") router.push(`/repositories/${result.repositoryId}`);
+      else if (result.run) router.push(`/repositories/${result.repositoryId}/processing/${result.run.id}`);
+      else setError({ code: "REQUEST_FAILED", message: "Import returned an incomplete response." });
     } catch (e: unknown) {
       setError(errorFromUnknown(e, "Import failed."));
+      if (e instanceof ApiError && (e.code === "PREFLIGHT_TOKEN_EXPIRED" || e.code === "PREFLIGHT_TOKEN_INVALID")) setStage("IMPORT");
     } finally {
       setLoading(false);
     }
@@ -116,7 +128,7 @@ export function ImportFlow() {
         <header className={ui.screenHead}><div><p className={ui.eyebrow}>preflight / source validated</p><h1 className={ui.sectionTitle} id="preflight-title">Select one application root.</h1></div><p className="m-0 text-muted">Live GitHub data — choose the application whose history you want to inspect.</p></header>
         <div className={ui.dataGrid} aria-label="Preflight facts"><Fact label="repository" value={preflight.repository.fullName} /><Fact label="target" value={`${preflight.repository.defaultBranch}@${preflight.repository.headSha.slice(0,7)}`} /><Fact label="first-parent commits" value={`${preflight.firstParentCommitCount} / ${preflight.limits.maxFirstParentCommits}`} /><Fact label="head files" value={`${preflight.headFileCount.toLocaleString("en-US")} / ${preflight.limits.maxHeadFiles.toLocaleString("en-US")}`} /></div>
         <div className={ui.alert}><strong>Completeness check passed.</strong><p>The entire first-parent chain is within current limits. RepoReplay will not create a partial import.</p></div>
-        <form onSubmit={queueRepository}><fieldset className="mt-8 border-0 p-0"><legend className="mb-2 font-mono text-xs uppercase text-cyan">Application root candidates</legend>{preflight.appRootCandidates.map((candidate) => <label className="grid grid-cols-[auto_1fr_auto] items-center gap-4 border border-line border-b-0 bg-panel p-4 last:border-b max-[560px]:grid-cols-[auto_1fr]" key={candidate.path}><input checked={selectedRoot === candidate.path} name="root" onChange={() => setSelectedRoot(candidate.path)} type="radio" /><span><code>{candidate.path}</code><small className="block break-words font-mono text-muted">{candidate.manifestPath} · {candidate.routeRoots.join(", ")} · {candidate.routeFileCount} route files</small></span><span className={ui.positive}>supported</span></label>)}</fieldset><div className="mt-4 flex gap-3 max-[560px]:flex-col"><button className={ui.button} onClick={() => { setError(null); setStage("IMPORT"); }} type="button">Change repository</button><button className={ui.primaryButton} disabled={loading} type="submit">{loading ? "Queuing..." : "Queue selected root"}</button></div>{error ? <ErrorPanel error={error} id="import-error" /> : null}</form>
+        <form onSubmit={queueRepository}><fieldset className="mt-8 border-0 p-0" disabled={loading}><legend className="mb-2 font-mono text-xs uppercase text-cyan">Application root candidates</legend>{preflight.appRootCandidates.map((candidate) => <label className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border border-line border-b-0 bg-panel p-4 last:border-b max-[560px]:grid-cols-[auto_minmax(0,1fr)]" key={candidate.path}><input checked={selectedRoot === candidate.path} name="root" onChange={() => setSelectedRoot(candidate.path)} type="radio" /><span className="min-w-0"><code className="break-all">{candidate.path}</code><small className="block break-all font-mono text-muted">{candidate.manifestPath} · {candidate.routeRoots.join(", ")} · {candidate.routeFileCount} route files</small></span><span className={ui.positive}>supported</span></label>)}</fieldset><div className="mt-4 flex flex-wrap gap-3 max-[560px]:flex-col"><button className={ui.button} disabled={loading} onClick={() => { setError(null); setStage("IMPORT"); }} type="button">Change repository</button>{preflight.appRootCandidates.length > 1 ? <button className={ui.button} disabled={loading} onClick={() => void queueImport()} type="button">Choose root later</button> : null}<button className={`${ui.primaryButton} disabled:opacity-60`} disabled={loading || !selectedRoot} type="submit">{loading ? "Queuing..." : "Queue selected root"}</button></div>{error ? <ErrorPanel error={error} id="import-error" /> : null}</form>
       </section>
     );
   }

@@ -1,4 +1,6 @@
 import type { Pool, PoolClient } from "pg";
+import { inTransaction, type Database } from "@/server/db/transaction";
+import { admitProcessingRun, DEFAULT_GLOBAL_RUNNING_JOBS } from "@/server/security/import-controls";
 import { computeRetryDelaySeconds, hasExhaustedAttempts, type RetryPolicy } from "./retry-policy";
 
 export const DEFAULT_WORKER_HEARTBEAT_TIMEOUT_SECONDS = 120;
@@ -42,10 +44,18 @@ interface ClaimRow {
   jobId: string; runId: string; repositoryId: string; leaseGeneration: number; leaseExpiresAt: Date; attemptCount: number; maxAttempts: number;
 }
 
-export async function claimNextDueJob(pool: Pool, workerId: string, leaseSeconds: number): Promise<ClaimedJob | null> {
+export async function claimNextDueJob(pool: Pool, workerId: string, limits: number | { leaseSeconds: number; maxRunningJobs: number }): Promise<ClaimedJob | null> {
+  const leaseSeconds = typeof limits === "number" ? limits : limits.leaseSeconds;
+  const maxRunningJobs = typeof limits === "number" ? DEFAULT_GLOBAL_RUNNING_JOBS : limits.maxRunningJobs;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(726321, 2)");
+    const running = await client.query<{ count: number }>(`SELECT COUNT(*)::int AS "count" FROM "ProcessingJob" WHERE "status"='RUNNING' AND "leaseExpiresAt">CURRENT_TIMESTAMP`);
+    if (running.rows[0].count >= maxRunningJobs) {
+      await client.query("COMMIT");
+      return null;
+    }
     const result = await client.query<ClaimRow>(`WITH candidate AS (
       SELECT j."id" FROM "ProcessingJob" j
       JOIN "ProcessingRun" r ON r."id" = j."runId"
@@ -82,57 +92,49 @@ export async function heartbeatJob(pool: Pool, job: ClaimedJob, leaseSeconds: nu
   return result.rowCount === 1;
 }
 
-export async function requestCancellation(pool: Pool, jobId: string): Promise<"CANCELLED" | "REQUESTED" | "NOT_FOUND"> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+export async function requestCancellation(database: Database, jobId: string): Promise<"CANCELLED" | "REQUESTED" | "NOT_FOUND"> {
+  return inTransaction(database, async (client) => {
     const immediate = await client.query<{ runId: string }>(`UPDATE "ProcessingJob" SET "status"='CANCELLED',"updatedAt"=CURRENT_TIMESTAMP
       WHERE "id"=$1 AND "status" IN ('QUEUED','RETRYABLE','WAITING_RATE_LIMIT') RETURNING "runId"`, [jobId]);
-    if (immediate.rows[0]) { await client.query(`UPDATE "ProcessingRun" SET "status"='CANCELLED',"completedAt"=CURRENT_TIMESTAMP WHERE "id"=$1`, [immediate.rows[0].runId]); await client.query("COMMIT"); return "CANCELLED"; }
+    if (immediate.rows[0]) { await client.query(`UPDATE "ProcessingRun" SET "status"='CANCELLED',"completedAt"=CURRENT_TIMESTAMP WHERE "id"=$1`, [immediate.rows[0].runId]); return "CANCELLED"; }
     const requested = await client.query(`UPDATE "ProcessingJob" SET "cancelRequestedAt"=CURRENT_TIMESTAMP,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "status"='RUNNING' RETURNING "id"`, [jobId]);
-    await client.query("COMMIT"); return requested.rowCount ? "REQUESTED" : "NOT_FOUND";
-  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+    return requested.rowCount ? "REQUESTED" : "NOT_FOUND";
+  });
 }
 
 export type RetryRunResult = "QUEUED" | "NOT_FOUND" | "NOT_RETRYABLE" | "RUN_ALREADY_ACTIVE";
 
-export async function retryFailedRun(pool: Pool, repositoryId: string, runId: string): Promise<RetryRunResult> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+export async function retryFailedRun(database: Database, repositoryId: string, run: string | { runId: string; maxPendingRuns: number }): Promise<RetryRunResult> {
+  const runId = typeof run === "string" ? run : run.runId;
+  return inTransaction(database, async (client) => {
     const repository = await client.query(`SELECT "id" FROM "Repository" WHERE "id"=$1 FOR UPDATE`, [repositoryId]);
-    if (!repository.rows[0]) { await client.query("ROLLBACK"); return "NOT_FOUND"; }
+    if (!repository.rows[0]) return "NOT_FOUND";
 
     const runResult = await client.query<{ status: string; jobId: string }>(
       `SELECT r."status"::text,j."id" AS "jobId" FROM "ProcessingRun" r JOIN "ProcessingJob" j ON j."runId"=r."id" WHERE r."id"=$1 AND r."repositoryId"=$2 FOR UPDATE OF r,j`,
       [runId, repositoryId],
     );
-    const run = runResult.rows[0];
-    if (!run) { await client.query("ROLLBACK"); return "NOT_FOUND"; }
-    if (run.status !== "FAILED") { await client.query("ROLLBACK"); return "NOT_RETRYABLE"; }
+    const currentRun = runResult.rows[0];
+    if (!currentRun) return "NOT_FOUND";
+    if (currentRun.status !== "FAILED") return "NOT_RETRYABLE";
 
     const activeRun = await client.query(
       `SELECT "id" FROM "ProcessingRun" WHERE "repositoryId"=$1 AND "id"<>$2 AND "status" IN ('NEEDS_CONFIGURATION','QUEUED','RUNNING','WAITING_RATE_LIMIT','RETRYABLE') LIMIT 1`,
       [repositoryId, runId],
     );
-    if (activeRun.rows[0]) { await client.query("ROLLBACK"); return "RUN_ALREADY_ACTIVE"; }
+    if (activeRun.rows[0]) return "RUN_ALREADY_ACTIVE";
+    await admitProcessingRun(client, typeof run === "string" ? undefined : run.maxPendingRuns);
 
     await client.query(
       `UPDATE "ProcessingJob" SET "status"='QUEUED',"attemptCount"=0,"nextAttemptAt"=CURRENT_TIMESTAMP,"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"cancelRequestedAt"=NULL,"lastErrorCode"=NULL,"lastErrorMessage"=NULL,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "runId"=$2 AND "status"='FAILED'`,
-      [run.jobId, runId],
+      [currentRun.jobId, runId],
     );
     await client.query(
       `UPDATE "ProcessingRun" SET "status"='QUEUED',"currentStep"='DISCOVER_HISTORY',"fetchedCommitCount"=0,"processedCommitCount"=0,"checkpointSequence"=-1,"checkpointUpdatedAt"=NULL,"startedAt"=NULL,"completedAt"=NULL,"activatedAt"=NULL,"errorCode"=NULL,"errorMessage"=NULL WHERE "id"=$1 AND "repositoryId"=$2 AND "status"='FAILED'`,
       [runId, repositoryId],
     );
-    await client.query("COMMIT");
     return "QUEUED";
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function finalizeCancellation(pool: Pool, job: ClaimedJob): Promise<boolean> {

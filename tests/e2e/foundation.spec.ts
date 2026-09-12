@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { CommitDetail } from "@/server/contracts/api";
 
 const preflightErrorScenarios = [
   { code: "UNSUPPORTED_REPOSITORY", title: "Unsupported Next.js application.", message: "No supported Next.js application found.", recovery: "supported app or pages route root" },
@@ -29,7 +30,9 @@ test("completes the fixture import flow", async ({ page }) => {
   });
   await page.route("**/api/repositories", async (route) => {
     if (route.request().method() !== "POST") return route.continue();
-    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ data: { repositoryId: "demo", runId: "run-demo", status: "QUEUED" } }) });
+    expect(route.request().postDataJSON()).toEqual({ preflightToken: "fixture-preflight-token", appRoot: "apps/admin" });
+    expect(route.request().headers()["idempotency-key"]).toBeTruthy();
+    await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ data: { repositoryId: "demo", availability: "PROCESSING", run: { id: "run-demo", status: "QUEUED" } } }) });
   });
 
   await page.goto("/");
@@ -371,10 +374,16 @@ function timelinePagePayload(runId: string, items: ReturnType<typeof timelineIte
   };
 }
 
-test("keeps timeline filters in the URL and sends them to the server", async ({ page }) => {
+test("keeps timeline filters in the URL and sends them to the server", async ({ page }, testInfo) => {
+  const width = testInfo.project.name === "mobile" ? 320 : 1280;
+  await page.setViewportSize({ width, height: 480 });
   const timelineRequests: string[] = [];
   await page.route("**/api/repositories/filter-repo**", async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname.includes("/commits/")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(commitDetailPayload()) });
+      return;
+    }
     if (url.pathname.endsWith("/commits")) {
       timelineRequests.push(url.toString());
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(timelinePagePayload("run-filter-repo", [timelineItemPayload("feat111", "feat: add account page")], null)) });
@@ -392,6 +401,30 @@ test("keeps timeline filters in the URL and sends them to the server", async ({ 
 
   await page.getByLabel("Keyword").fill("account");
   await expect(page).toHaveURL(/query=account/);
+  await page.getByRole("combobox", { name: "Category", exact: true }).selectOption("FEATURE");
+  await page.getByLabel("File path", { exact: true }).fill("src/app/[id]");
+  await page.getByLabel("From", { exact: true }).fill("2026-09-01");
+  await page.getByLabel("Through", { exact: true }).fill("2026-09-02");
+  await expect.poll(() => timelineRequests.some((request) => {
+    const params = new URL(request).searchParams;
+    return params.get("query") === "account" && params.get("event") === "DEPENDENCY" && params.get("category") === "FEATURE"
+      && params.get("path") === "src/app/[id]" && params.get("from") === "2026-09-01" && params.get("to") === "2026-09-02";
+  })).toBe(true);
+  await expect(page.getByRole("heading", { name: "Analyzed snapshot" })).toBeVisible();
+  await expect(page.getByText("Root commit", { exact: true })).toBeVisible();
+  await expect(page.getByText("Analysis versions", { exact: true })).toBeVisible();
+  const filteredUrl = page.url();
+  const commitLink = page.getByRole("link", { name: "feat: add account page" });
+  await commitLink.scrollIntoViewIfNeeded();
+  const scrollBeforeInspection = await page.evaluate(() => window.scrollY);
+  expect(scrollBeforeInspection).toBeGreaterThan(0);
+  await commitLink.click();
+  await page.getByRole("link", { name: "Close evidence" }).click();
+  await expect(page).toHaveURL(filteredUrl);
+  await expect(page.getByLabel("File path", { exact: true })).toHaveValue("src/app/[id]");
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollBeforeInspection);
+  await page.getByRole("button", { name: "Reset filters" }).click();
+  await expect(page).toHaveURL(/repositories\/filter-repo$/);
 });
 
 test("appends older commits with cursor pagination", async ({ page }) => {
@@ -445,7 +478,7 @@ test("keeps timeline visible when the cursor snapshot changes", async ({ page })
   await expect(page.getByRole("link", { name: "feat: add account page" })).toBeVisible();
 });
 
-function commitDetailPayload() {
+function commitDetailPayload(): { data: CommitDetail } {
   return {
     data: {
       snapshot: { runId: "run-drawer-repo" },
@@ -505,4 +538,65 @@ test("supports Escape on the showcase commit drawer", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(/repositories\/demo$/);
+});
+
+test("keeps live snapshot and commit evidence readable with long content", async ({ page }, testInfo) => {
+  const width = testInfo.project.name === "mobile" ? 320 : 1280;
+  await page.setViewportSize({ width, height: 900 });
+  await page.route("**/api/repositories/long-content-repo**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.includes("/commits/")) {
+      const detail = commitDetailPayload();
+      const longManifestPath = `apps/${"nested/".repeat(20)}package.json`;
+      const longPreviousValue = "previous-version-".repeat(12);
+      detail.data.sha = "c".repeat(40);
+      detail.data.shortSha = "c".repeat(40);
+      detail.data.firstParentSha = "d".repeat(40);
+      detail.data.files = [{ status: "MODIFIED", path: `apps/${"nested/".repeat(20)}${"component-".repeat(12)}page.tsx`, previousPath: null, additions: 1, deletions: 1, changes: 2 }];
+      detail.data.dependencyChanges = [{
+        manifestPath: longManifestPath,
+        packageName: `@scope/${"dependency-".repeat(12)}`,
+        dependencyGroup: "dependencies",
+        changeType: "UPDATED",
+        previousValue: longPreviousValue,
+        currentValue: "current-version-".repeat(12),
+      }];
+      await route.fulfill({ json: detail });
+      return;
+    }
+    if (pathname.endsWith("/commits")) {
+      await route.fulfill({ json: timelinePagePayload("run-long-content-repo", [timelineItemPayload("feat111", `feat: ${"long-subject-".repeat(20)}`)], null) });
+      return;
+    }
+    const payload = timelineRepositoryPayload("long-content-repo");
+    payload.data.name = "repository-name-".repeat(10);
+    payload.data.selectedAppRoot = `apps/${"nested/".repeat(20)}web`;
+    payload.data.activeSnapshot.rootSha = "a".repeat(40);
+    payload.data.activeSnapshot.headSha = "b".repeat(40);
+    await route.fulfill({ json: payload });
+  });
+  await page.goto("/repositories/long-content-repo");
+  await expect(page.getByRole("heading", { name: "Analyzed snapshot" })).toBeVisible();
+  await expect(page.getByLabel("Through", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  await page.screenshot({ path: testInfo.outputPath("snapshot-and-filters.png"), fullPage: true });
+  await page.getByRole("link", { name: `feat: ${"long-subject-".repeat(20)}` }).click();
+  await expect(page.getByRole("heading", { name: "Dependency evidence" })).toBeVisible();
+  await expect(page.getByText("previous-version-".repeat(12), { exact: false })).toBeVisible();
+  await expect(page.getByText("apps/" + "nested/".repeat(20) + "package.json", { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+});
+
+test("opens the existing snapshot when import reuses a ready repository", async ({ page }) => {
+  await page.route("**/api/repositories/preflight", (route) => route.fulfill({ json: {
+    data: { repository: { externalId: "fixture", fullName: "acme/ledger", defaultBranch: "main", headSha: "a".repeat(40) },
+      firstParentCommitCount: 2, headFileCount: 10, limits: { maxFirstParentCommits: 500, maxHeadFiles: 25000 },
+      appRootCandidates: [{ path: ".", manifestPath: "package.json", routeRoots: ["app"], routeFileCount: 1 }], preflightToken: "fixture-token" },
+  } }));
+  await page.route("**/api/repositories", (route) => route.fulfill({ json: { data: { repositoryId: "demo", availability: "READY", activeSnapshot: { runId: "old-run" } } } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Run preflight" }).click();
+  await page.getByRole("button", { name: "Queue selected root" }).click();
+  await expect(page).toHaveURL(/repositories\/demo$/);
+  await expect(page.getByRole("heading", { name: "acme/ledger" })).toBeVisible();
 });

@@ -1,84 +1,34 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
-import { parseEnvironment } from "@/lib/environment";
-import { parseGitHubRepositoryUrl } from "@/server/github/repository-url";
-import { createGitHubSourceFromEnvironment } from "@/server/github/client";
-import { runPreflight } from "@/server/github/preflight";
-import { RepoReplayError } from "@/server/github/errors";
+import { apiEnvironment } from "@/server/api/environment";
 import { getPool } from "@/server/db/client-pool";
+import { apiErrorResponse } from "@/server/api/responses";
+import { idempotentMutation } from "@/server/api/idempotency";
+import { createOrReuseImport } from "@/server/jobs/import-repository";
+import { consumeImportQuota, requestSubject } from "@/server/security/import-controls";
+import { signingSecret, verifyPreflightToken } from "@/server/security/preflight-token";
+import { RepoReplayError } from "@/server/github/errors";
 
-const bodySchema = z.object({ url: z.string().min(1), appRoot: z.string().optional() });
-
-function statusForCode(code: string): number {
-  switch (code) {
-    case "INVALID_REPOSITORY_URL":
-      return 400;
-    case "REPOSITORY_NOT_FOUND":
-      return 404;
-    case "REPOSITORY_NOT_PUBLIC":
-      return 403;
-    case "EMPTY_REPOSITORY":
-      return 409;
-    case "UNSUPPORTED_REPOSITORY":
-      return 422;
-    case "REPOSITORY_LIMIT_EXCEEDED":
-      return 422;
-    case "GITHUB_RATE_LIMITED":
-      return 429;
-    default:
-      return 500;
-  }
-}
+const bodySchema = z.object({ preflightToken: z.string().min(1).max(500_000), appRoot: z.string().min(1).optional() }).strict();
 
 export async function POST(request: Request) {
   try {
-    const env = parseEnvironment(process.env);
-    const pool = getPool(env.DATABASE_URL);
-    const json = await request.json();
-    const { url, appRoot } = bodySchema.parse(json);
-    const ref = parseGitHubRepositoryUrl(url);
-    const source = createGitHubSourceFromEnvironment(env);
-    const preflight = await runPreflight({ source, owner: ref.owner, name: ref.name, maxCommits: env.MAX_FIRST_PARENT_COMMITS, maxFiles: env.MAX_HEAD_FILES });
-
-    let selectedAppRoot: string | null = null;
-    if (preflight.candidates.length === 1) selectedAppRoot = preflight.candidates[0].path;
-    else if (appRoot) {
-      const match = preflight.candidates.find((c) => c.path === appRoot);
-      if (!match) throw new RepoReplayError("INVALID_APP_ROOT_SELECTION", "Selected app root does not match discovered candidates.");
-      selectedAppRoot = match.path;
-    } else {
-      return NextResponse.json({ error: { code: "CONFIGURATION_REQUIRED", message: "Multiple Next.js applications found. Select one.", details: { candidates: preflight.candidates } } }, { status: 409 });
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const repoResult = await client.query<{ id: string }>(
-        `INSERT INTO "Repository"("id","provider","externalId","owner","name","fullName","canonicalUrl","defaultBranch","selectedAppRoot","availability","updatedAt")
-         VALUES(gen_random_uuid(),'GITHUB',$1,$2,$3,$4,$5,$6,$7,'PROCESSING',CURRENT_TIMESTAMP)
-         ON CONFLICT("provider","externalId") DO UPDATE SET "owner"=EXCLUDED."owner","name"=EXCLUDED."name","fullName"=EXCLUDED."fullName","canonicalUrl"=EXCLUDED."canonicalUrl","defaultBranch"=EXCLUDED."defaultBranch","selectedAppRoot"=EXCLUDED."selectedAppRoot","updatedAt"=CURRENT_TIMESTAMP
-         RETURNING "id"`,
-        [preflight.repository.externalId, preflight.repository.owner, preflight.repository.name, preflight.repository.fullName, preflight.repository.canonicalUrl, preflight.repository.defaultBranch, selectedAppRoot],
-      );
-      const repositoryId = repoResult.rows[0].id;
-      const existing = await client.query<{ id: string }>(`SELECT "id" FROM "ProcessingRun" WHERE "repositoryId"=$1 AND "status" IN ('NEEDS_CONFIGURATION','QUEUED','RUNNING','WAITING_RATE_LIMIT','RETRYABLE') LIMIT 1`, [repositoryId]);
-      if (existing.rows[0]) {
-        await client.query("COMMIT");
-        return NextResponse.json({ data: { repositoryId, runId: existing.rows[0].id, status: "QUEUED" } }, { status: 200 });
+    const environment = apiEnvironment();
+    const body = bodySchema.parse(await request.json());
+    return await idempotentMutation({
+      pool: getPool(environment.DATABASE_URL), request, normalizedBody: body,
+      retentionSeconds: environment.IDEMPOTENCY_RETENTION_SECONDS,
+    }, async (client) => {
+      const evidence = verifyPreflightToken(body.preflightToken, { secret: signingSecret(environment) });
+      if (evidence.firstParentCommitCount > environment.MAX_FIRST_PARENT_COMMITS || evidence.headFileCount > environment.MAX_HEAD_FILES) {
+        throw new RepoReplayError("REPOSITORY_LIMIT_EXCEEDED", "Processing limits changed. Run preflight again.");
       }
-      const runResult = await client.query<{ id: string }>(
-        `INSERT INTO "ProcessingRun"("id","repositoryId","kind","status","selectedAppRoot","defaultBranch","headSha","expectedCommitCount","headFileCount","maxCommitLimit","maxHeadFileLimit","schemaVersion","classifierVersion","dependencyDetectorVersion","routeDetectorVersion","currentStep")
-         VALUES(gen_random_uuid(),$1,'IMPORT','QUEUED',$2,$3,$4,$5,$6,$7,$8,'1','1','1','1','DISCOVER_HISTORY') RETURNING "id"`,
-        [repositoryId, selectedAppRoot, preflight.repository.defaultBranch, preflight.headSha, preflight.firstParentCommitCount, preflight.headFileCount, env.MAX_FIRST_PARENT_COMMITS, env.MAX_HEAD_FILES],
-      );
-      const runId = runResult.rows[0].id;
-      await client.query(`INSERT INTO "ProcessingJob"("id","runId","status","updatedAt") VALUES(gen_random_uuid(),$1,'QUEUED',CURRENT_TIMESTAMP)`, [runId]);
-      await client.query("COMMIT");
-      return NextResponse.json({ data: { repositoryId, runId, status: "QUEUED" } }, { status: 201 });
-    } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+      await consumeImportQuota(client, {
+        subjectHash: requestSubject(request, environment), maximum: environment.MAX_IMPORTS_PER_IP_WINDOW,
+        windowSeconds: environment.IMPORT_IP_WINDOW_SECONDS,
+      });
+      return createOrReuseImport(client, { evidence, appRoot: body.appRoot, maxPendingRuns: environment.MAX_GLOBAL_PENDING_RUNS });
+    });
   } catch (error) {
-    if (error instanceof RepoReplayError) return NextResponse.json({ error: { code: error.code, message: error.message, details: error.details } }, { status: statusForCode(error.code) });
-    if (error instanceof z.ZodError) return NextResponse.json({ error: { code: "INVALID_REPOSITORY_URL", message: "Invalid request." } }, { status: 400 });
-    return NextResponse.json({ error: { code: "GITHUB_UNAVAILABLE", message: "Unexpected error." } }, { status: 500 });
+    return apiErrorResponse(error);
   }
 }

@@ -9,3 +9,4 @@ generated/
 *.log
 *.pem
 *.tsbuildinfo
+.tmp/

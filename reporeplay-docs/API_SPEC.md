@@ -102,11 +102,13 @@ Errors:
 
 `REPOSITORY_LIMIT_EXCEEDED.details` identifies the actual and allowed values.
 
+Preflight calls share an import-control quota with imports, refreshes, and retries. Defaults allow 20 such requests per 15-minute window. Unless `TRUSTED_CLIENT_IP_HEADER` names a header that a trusted reverse proxy overwrites, all requests use one shared anonymous quota. Configure that header only when the proxy prevents clients from supplying it themselves.
+
 ## 4. Create or Reuse Import
 
 ```http
 POST /api/repositories
-Idempotency-Key: <opaque-value>
+Idempotency-Key: <opaque-value> (recommended)
 ```
 
 Request:
@@ -152,6 +154,21 @@ Configuration response, `202 Accepted`:
 ```
 
 If a ready repository already exists and no refresh was requested, return `200 OK` with its active snapshot. If a nonterminal run exists, return it rather than creating another.
+
+When supplied, the idempotency key is scoped to the HTTP method and route. Repeating it with the same normalized request body replays the original status and response for 24 hours by default; using it with a different body returns `409 IDEMPOTENCY_KEY_CONFLICT`. The header is optional. The client keeps the same key when retrying after an ambiguous network failure.
+
+Pending work is capped at 20 runs globally by default. The cap includes configuration-required, queued, running, rate-limited, and retryable runs; a full queue returns `429 GLOBAL_RUN_LIMITED` with `Retry-After`. Running jobs have a separate global default limit of four.
+
+Import errors:
+
+```text
+400 PREFLIGHT_TOKEN_INVALID
+400 IDEMPOTENCY_KEY_INVALID
+409 PREFLIGHT_TOKEN_EXPIRED
+409 IDEMPOTENCY_KEY_CONFLICT
+429 IMPORT_RATE_LIMITED
+429 GLOBAL_RUN_LIMITED
+```
 
 ## 5. Configure App Root
 

@@ -1,22 +1,25 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/server/db/client-pool";
 import { decodeTimelineCursor, encodeTimelineCursor } from "@/server/api/timeline-cursor";
+import { parseTimelineQuery } from "@/server/api/timeline-query";
+import { apiErrorResponse } from "@/server/api/responses";
 
 export async function GET(request: Request, { params }: { params: Promise<{ repositoryId: string }> }) {
-  const { repositoryId } = await params;
+  try {
+    return await readTimeline(request, (await params).repositoryId);
+  } catch (error) {
+    return apiErrorResponse(error);
+  }
+}
+
+async function readTimeline(request: Request, repositoryId: string) {
   const url = new URL(request.url);
-  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 30), 1), 100);
+  const { limit, query, category, path, event, from, to, toExclusive } = parseTimelineQuery(url.searchParams);
   const rawCursor = url.searchParams.get("cursor");
   const cursor = rawCursor === null ? null : decodeTimelineCursor(rawCursor);
   if (rawCursor !== null && cursor === null) {
     return NextResponse.json({ error: { code: "CURSOR_INVALID", message: "The provided cursor is not valid." } }, { status: 400 });
   }
-  const query = url.searchParams.get("query")?.trim() ?? "";
-  const category = url.searchParams.get("category")?.trim() ?? "";
-  const path = url.searchParams.get("path")?.trim() ?? "";
-  const event = url.searchParams.get("event")?.trim() ?? "";
-  const from = url.searchParams.get("from");
-  const to = url.searchParams.get("to");
   const pool = getPool(process.env.DATABASE_URL!);
   const repo = await pool.query(`SELECT "activeRunId" FROM "Repository" WHERE "id"=$1`, [repositoryId]);
   if (!repo.rows[0]?.activeRunId) return NextResponse.json({ data: { snapshot: null, items: [], pageInfo: { nextCursor: null, hasNextPage: false } } });
@@ -36,7 +39,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ repo
     idx += 1;
   }
   if (from) { conditions.push(`c."committedAt">=$${idx++}`); values.push(from); }
-  if (to) { conditions.push(`c."committedAt"<=$${idx++}`); values.push(to); }
+  if (to) { conditions.push(`c."committedAt"${toExclusive ? "<" : "<="}$${idx++}`); values.push(to); }
   if (event === "ROUTE") conditions.push(`EXISTS (SELECT 1 FROM "RouteChange" rc WHERE rc."runId"=c."runId" AND rc."runCommitId"=c."id")`);
   if (event === "DEPENDENCY") conditions.push(`EXISTS (SELECT 1 FROM "DependencyChange" dc WHERE dc."runId"=c."runId" AND dc."runCommitId"=c."id")`);
   const where = conditions.join(" AND ");

@@ -46,7 +46,7 @@ async function startWorker(): Promise<void> {
   while (!shuttingDown) {
     await recordWorkerHeartbeat(pool, workerId, "0.1.0");
     while (!shuttingDown && active.size < environment.WORKER_CONCURRENCY) {
-      const job = await claimNextDueJob(pool, workerId, environment.JOB_LEASE_SECONDS);
+      const job = await claimNextDueJob(pool, workerId, { leaseSeconds: environment.JOB_LEASE_SECONDS, maxRunningJobs: environment.MAX_GLOBAL_RUNNING_JOBS });
       if (!job) break;
       const execution = executeJob(job).finally(() => active.delete(execution));
       active.add(execution);

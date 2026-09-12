@@ -137,6 +137,26 @@ model Repository {
   @@index([availability])
 }
 
+model IdempotencyRecord {
+  scope       String
+  keyHash     String
+  requestHash String
+  status      Int
+  response    Json
+  expiresAt   DateTime @db.Timestamptz
+
+  @@id([scope, keyHash])
+  @@index([expiresAt])
+}
+
+model ImportRateWindow {
+  subjectHash String   @id
+  count       Int
+  resetsAt    DateTime @db.Timestamptz
+
+  @@index([resetsAt])
+}
+
 model ProcessingRun {
   id                        String                @id @default(uuid()) @db.Uuid
   repositoryId              String                @db.Uuid

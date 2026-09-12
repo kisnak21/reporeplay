@@ -78,9 +78,9 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 - [x] Implement create-or-reuse import transaction.
 - [x] Implement configuration-required runs.
 - [x] Implement app-root selection restricted to discovered candidates.
-- [ ] Implement idempotency-key storage and replay behavior.
-- [ ] Implement per-IP import throttling and global run admission.
-- [ ] Test concurrent duplicate imports.
+- [x] Implement idempotency-key storage and replay behavior.
+- [x] Implement per-IP import throttling and global run admission.
+- [x] Test concurrent duplicate imports.
 
 **Acceptance:** Unsupported and oversized repositories never enqueue, and concurrent valid imports yield one nonterminal run.
 
@@ -187,17 +187,17 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 
 ## Epic 13: Overview and Timeline UI
 
-- [ ] Build stable repository route and header.
-- [ ] Display branch, app root, root/head SHA, complete count, dates, and processed time.
-- [ ] Display route and dependency summary counts.
-- [ ] Build coverage summary and warning details.
+- [x] Build stable repository route and header.
+- [x] Display branch, app root, root/head SHA, complete count, dates, and processed time.
+- [x] Display route and dependency summary counts.
+- [x] Build coverage summary and warning details.
 - [x] Build URL-backed timeline filters.
 - [x] Build cursor loading and snapshot-mismatch recovery.
 - [x] Build commit summaries with textual event labels.
 - [x] Build accessible changed-file disclosures.
 - [x] Preserve filters and scroll position during commit inspection.
 - [x] Add loading, empty, partial-page error, and confirmed-no-event states.
-- [ ] Test long names, paths, SHAs, and declaration values.
+- [x] Test long names, paths, SHAs, and declaration values.
 
 **Acceptance:** A reviewer can find a route or dependency event and identify its commit without leaving the timeline.
 
