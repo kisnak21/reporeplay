@@ -109,6 +109,63 @@ describeDatabase("staged output persistence", () => {
     await cleanup(pool, fixture.repositoryId);
   });
 
+  it("rejects force-push drift without changing the checkpoint or active snapshot", async () => {
+    const fixture = await createFixture(pool, "force-push-drift");
+    const claim = await claimNextDueJob(pool, "force-push-resumer", 60);
+    expect(claim).not.toBeNull();
+    if (!claim) return;
+
+    await pool.query(`UPDATE "ProcessingRun" SET "headSha"='sha-2',"expectedCommitCount"=3 WHERE "id"=$1`, [claim.runId]);
+    const root = createCommit(claim.runId, 0);
+    root.sha = "sha-0";
+    root.shortSha = "sha-0";
+    root.treeSha = "tree-sha-0";
+    const checkpoint = createCommit(claim.runId, 1);
+    checkpoint.sha = "sha-1";
+    checkpoint.shortSha = "sha-1";
+    checkpoint.treeSha = "tree-sha-1";
+    checkpoint.firstParentSha = "sha-0";
+    await writeCheckpointedCommitBatch(pool, { ...claim, step: "FETCH_COMMITS", sequence: 0 }, [root, checkpoint]);
+
+    const activeRunId = await createSuccessfulSnapshot(pool, fixture.repositoryId, "active-before-force-push");
+    await pool.query(`UPDATE "Repository" SET "activeRunId"=$1,"availability"='READY' WHERE "id"=$2`, [activeRunId, fixture.repositoryId]);
+
+    const source: GitHubRepositorySource = {
+      getRepository: async () => { throw new Error("unused in force-push drift test"); },
+      getBranchHead: async () => { throw new Error("ingestion must use the frozen head SHA"); },
+      getCommit: async (_owner, _name, sha) => {
+        if (sha === "sha-2") return { sha, treeSha: "tree-sha-2", parentShas: ["rewritten-root"], message: "feat: new forced history", authorName: null, authoredAt: null, committedAt: new Date(), externalUrl: "https://github.com/test", additions: 0, deletions: 0, changedFileCount: 0, files: [] };
+        if (sha === "rewritten-root") return { sha, treeSha: "rewritten-tree", parentShas: [], message: "feat: rewritten root", authorName: null, authoredAt: null, committedAt: new Date(), externalUrl: "https://github.com/test", additions: 0, deletions: 0, changedFileCount: 0, files: [] };
+        throw new Error(`Unexpected history fetch for ${sha}`);
+      },
+      getTree: async () => ({ treeSha: "unused", paths: [], complete: true }),
+      getFile: async () => null,
+      getRateLimit: async () => ({ remaining: 1, resetAt: new Date() }),
+    };
+
+    await expect(ingestFirstParentHistory({
+      source,
+      pool,
+      job: claim,
+      owner: "test",
+      name: "repo",
+      headSha: "sha-2",
+      maxCommits: 500,
+      expectedCommitCount: 3,
+    })).rejects.toThrow("The first-parent history no longer reaches its stored checkpoint.");
+
+    const state = await pool.query<{ checkpointSequence: number; commitCount: number; activeRunId: string }>(
+      `SELECT run."checkpointSequence",
+         (SELECT COUNT(*)::int FROM "RunCommit" staged WHERE staged."runId"=run."id") AS "commitCount",
+         repository."activeRunId"
+       FROM "ProcessingRun" run JOIN "Repository" repository ON repository."id"=run."repositoryId"
+       WHERE run."id"=$1`,
+      [claim.runId],
+    );
+    expect(state.rows[0]).toEqual({ checkpointSequence: 1, commitCount: 2, activeRunId });
+    await cleanup(pool, fixture.repositoryId);
+  });
+
   it("rejects stale lease generations before writing", async () => {
     const fixture = await createFixture(pool, "stale");
     const claim = await claimNextDueJob(pool, "writer-a", 60);

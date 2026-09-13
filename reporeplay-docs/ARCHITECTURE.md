@@ -237,7 +237,7 @@ Activation transaction:
 4. mark the run and job succeeded;
 5. update public repository metadata timestamps.
 
-After activation, delete successful runs older than `activeRunId` and `previousRunId`. Failed run retention is bounded by an operational policy.
+After activation, a worker maintenance sweep deletes successful runs older than `activeRunId` and `previousRunId`. The same sweep retains at most `MAX_FAILED_RUNS_PER_REPOSITORY` failed runs per repository and deletes failures older than `FAILED_RUN_RETENTION_DAYS`.
 
 ## 11. Refresh
 

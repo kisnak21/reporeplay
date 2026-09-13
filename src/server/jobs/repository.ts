@@ -238,6 +238,8 @@ export async function completeJob(pool: Pool, job: ClaimedJob): Promise<boolean>
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const repositoryResult = await client.query(`SELECT "id" FROM "Repository" WHERE "id"=$1 AND "deletedAt" IS NULL FOR UPDATE`, [job.repositoryId]);
+    if (repositoryResult.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
     const jobResult = await client.query(
       `UPDATE "ProcessingJob" SET "status"='SUCCEEDED',"leaseOwner"=NULL,"leaseExpiresAt"=NULL,"heartbeatAt"=NULL,"lastErrorCode"=NULL,"lastErrorMessage"=NULL,"updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "runId"=$2 AND "status"='RUNNING' AND "leaseOwner"=$3 AND "leaseGeneration"=$4 AND "leaseExpiresAt">CURRENT_TIMESTAMP AND "cancelRequestedAt" IS NULL AND EXISTS (SELECT 1 FROM "ProcessingRun" r WHERE r."id"=$2 AND r."status"='RUNNING' AND r."currentStep"='ACTIVATE_RUN') RETURNING "runId"`,
       [job.jobId, job.runId, job.workerId, job.leaseGeneration],

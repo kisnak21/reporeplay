@@ -410,9 +410,11 @@ Successful retry returns `{ data: { repositoryId, runId, status: "QUEUED" } }`. 
 
 ```http
 DELETE /api/admin/repositories/:repositoryId
+Authorization: Bearer <ADMIN_HEALTH_TOKEN>
+Idempotency-Key: <optional-key>
 ```
 
-Requires administrative authorization. The operation requests cancellation, invalidates future lease writes, and permanently deletes all repository data. Return `202 Accepted` if asynchronous cleanup is needed.
+Requires administrative authorization. Missing or invalid authorization returns `401 ADMIN_UNAUTHORIZED`; a missing repository returns `404 REPOSITORY_NOT_FOUND`. The operation fences active worker leases, cancels nonterminal runs, and permanently deletes the repository and its run data in one transaction. Success returns `200` with `{ data: { repositoryId, deleted: true } }`.
 
 ## 13. Health
 

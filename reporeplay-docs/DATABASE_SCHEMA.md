@@ -330,7 +330,7 @@ After activation:
 - retain the active successful run;
 - retain one previous successful run;
 - delete older successful run graphs asynchronously;
-- retain failed runs only for a configured diagnostic period;
+- retain up to the configured number of recent failed runs per repository and delete older failures after the configured diagnostic period;
 - permanent repository deletion cancels or invalidates leases, then cascades all repository data.
 
 Git SHAs are immutable, but run membership and default-branch history are not. Do not preserve orphaned run data indefinitely merely because commit objects are immutable.

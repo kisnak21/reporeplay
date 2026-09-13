@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { configureRunAppRoot, enqueueRefreshRun, type RefreshRunInput } from "../../src/server/jobs/manual-refresh";
-import { claimNextDueJob, completeJob } from "../../src/server/jobs/repository";
+import { claimNextDueJob, completeJob, retryFailedRun, scheduleRetry } from "../../src/server/jobs/repository";
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
+const retryPolicy = { baseSeconds: 1, maxSeconds: 10, jitterPercent: 0 };
 
 describeDatabase("manual repository refresh", () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 6 });
@@ -194,7 +195,64 @@ describeDatabase("manual repository refresh", () => {
       selectedAppRoot: "apps/web",
     });
   });
+
+  it("keeps the active snapshot through a failed refresh and its retry", async () => {
+    const fixture = await createActiveRepository(pool, "failure-retry");
+    const refresh = await enqueueRefreshRun(pool, refreshInput(fixture.repositoryId));
+    expect(refresh.outcome).toBe("QUEUED");
+    if (refresh.outcome !== "QUEUED") return;
+
+    await pool.query(`UPDATE "ProcessingJob" SET "maxAttempts"=1 WHERE "runId"=$1`, [refresh.runId]);
+    const job = await claimNextDueJob(pool, "refresh-failure-worker", 60);
+    expect(job?.runId).toBe(refresh.runId);
+    if (!job) return;
+
+    expect(await scheduleRetry(pool, job, retryPolicy, "GITHUB_UNAVAILABLE", "Temporary source failure.", () => 0)).toBe("FAILED");
+    const failed = await getRefreshState(pool, fixture.repositoryId, refresh.runId);
+    expect(failed).toMatchObject({
+      activeRunId: fixture.activeRunId,
+      availability: "READY",
+      runStatus: "FAILED",
+      jobStatus: "FAILED",
+      errorCode: "GITHUB_UNAVAILABLE",
+    });
+
+    expect(await retryFailedRun(pool, fixture.repositoryId, refresh.runId)).toBe("QUEUED");
+    const retried = await getRefreshState(pool, fixture.repositoryId, refresh.runId);
+    expect(retried).toMatchObject({
+      activeRunId: fixture.activeRunId,
+      availability: "READY",
+      runStatus: "QUEUED",
+      jobStatus: "QUEUED",
+      errorCode: null,
+    });
+  });
 });
+
+async function getRefreshState(pool: Pool, repositoryId: string, runId: string): Promise<{
+  activeRunId: string;
+  availability: string;
+  runStatus: string;
+  jobStatus: string;
+  errorCode: string | null;
+}> {
+  const result = await pool.query<{
+    activeRunId: string;
+    availability: string;
+    runStatus: string;
+    jobStatus: string;
+    errorCode: string | null;
+  }>(
+    `SELECT repository."activeRunId",repository."availability"::text,
+       run."status"::text AS "runStatus",job."status"::text AS "jobStatus",run."errorCode"
+     FROM "Repository" repository
+     JOIN "ProcessingRun" run ON run."id"=$2 AND run."repositoryId"=repository."id"
+     JOIN "ProcessingJob" job ON job."runId"=run."id"
+     WHERE repository."id"=$1`,
+    [repositoryId, runId],
+  );
+  return result.rows[0];
+}
 
 function refreshInput(repositoryId: string): RefreshRunInput {
   return {

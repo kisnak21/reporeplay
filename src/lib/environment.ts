@@ -30,6 +30,8 @@ export const environmentSchema = z.object({
   JOB_RETRY_MAX_SECONDS: positiveInteger.default(3_600),
   JOB_RETRY_JITTER_PERCENT: percentage.default(20),
   QUEUE_LAG_WARN_SECONDS: positiveInteger.default(60),
+  MAX_FAILED_RUNS_PER_REPOSITORY: positiveInteger.default(5),
+  FAILED_RUN_RETENTION_DAYS: positiveInteger.default(30),
 }).superRefine((environment, context) => {
   if (environment.JOB_HEARTBEAT_SECONDS * 2 >= environment.JOB_LEASE_SECONDS) {
     context.addIssue({ code: "custom", message: "JOB_HEARTBEAT_SECONDS must be less than half of JOB_LEASE_SECONDS" });

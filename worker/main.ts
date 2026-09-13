@@ -27,7 +27,10 @@ async function startWorker(): Promise<void> {
   const workerId = createWorkerId(environment.WORKER_ID);
   const pool = createDatabasePool(environment.DATABASE_URL);
   const retryPolicy: RetryPolicy = { baseSeconds: environment.JOB_RETRY_BASE_SECONDS, maxSeconds: environment.JOB_RETRY_MAX_SECONDS, jitterPercent: environment.JOB_RETRY_JITTER_PERCENT };
-  const sweeper = startSweeper(pool, environment.WORKER_SWEEP_INTERVAL_MS, retryPolicy);
+  const sweeper = startSweeper(pool, environment.WORKER_SWEEP_INTERVAL_MS, retryPolicy, {
+    maxFailedRunsPerRepository: environment.MAX_FAILED_RUNS_PER_REPOSITORY,
+    failedRunRetentionDays: environment.FAILED_RUN_RETENTION_DAYS,
+  });
   const active = new Set<Promise<void>>();
   let shuttingDown = false;
 

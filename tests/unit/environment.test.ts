@@ -18,6 +18,8 @@ describe("parseEnvironment", () => {
     expect(environment.JOB_HEARTBEAT_SECONDS * 2).toBeLessThan(environment.JOB_LEASE_SECONDS);
     expect(environment.WORKER_CONCURRENCY).toBe(2);
     expect(environment.JOB_RETRY_MAX_SECONDS).toBe(3_600);
+    expect(environment.MAX_FAILED_RUNS_PER_REPOSITORY).toBe(5);
+    expect(environment.FAILED_RUN_RETENTION_DAYS).toBe(30);
   });
 
   it("treats an empty optional admin token as unconfigured", () => {

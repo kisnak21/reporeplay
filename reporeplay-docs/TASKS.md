@@ -148,8 +148,8 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 - [x] Validate required detector completion and provenance.
 - [x] Implement atomic active/previous run activation transaction.
 - [x] Mark run and job success in the activation transaction.
-- [ ] Retain active plus one previous successful run.
-- [ ] Bound failed-run retention.
+- [x] Retain active plus one previous successful run.
+- [x] Bound failed-run retention.
 - [x] Test transaction rollback at every activation write.
 - [x] Test that failed validation leaves active pointers unchanged.
 
@@ -221,9 +221,9 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 - [x] Implement ambiguous-root refresh configuration.
 - [x] Implement refresh retry and cancellation endpoints.
 - [x] Implement failed-refresh messaging and retained-snapshot evidence.
-- [ ] Implement protected permanent deletion.
-- [ ] Invalidate leases before cascading deletion.
-- [ ] Test force push, default-branch change, concurrent refresh, failure, retry, activation, rollback, and deletion races.
+- [x] Implement protected permanent deletion.
+- [x] Invalidate leases before cascading deletion.
+- [x] Test force push, default-branch change, concurrent refresh, failure, retry, activation, rollback, and deletion races.
 
 **Acceptance:** Failed refresh and deletion race tests cannot corrupt or resurrect repository data.
 
