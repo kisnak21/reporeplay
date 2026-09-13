@@ -17,6 +17,7 @@ export interface WorkerHealthSnapshot {
   status: WorkerHealthState;
   checkedAt: Date;
   heartbeatTimeoutSeconds: number;
+  queueLagWarnSeconds: number;
   workers: Array<{
     workerId: string;
     processVersion: string;
@@ -221,7 +222,7 @@ export async function getWorkerHealth(pool: Pool, heartbeatTimeoutSeconds: numbe
   const liveWorkers = workerRows.filter((worker) => worker.heartbeatAgeSeconds <= heartbeatTimeoutSeconds);
   const queueLagging = queue.oldestDueSeconds !== null && queue.oldestDueSeconds > queueLagWarnSeconds;
   const status: WorkerHealthState = liveWorkers.length === 0 ? "OFFLINE" : queue.expiredJobs > 0 || queueLagging ? "DEGRADED" : "HEALTHY";
-  return { status, checkedAt: new Date(), heartbeatTimeoutSeconds, workers: workerRows, queue };
+  return { status, checkedAt: new Date(), heartbeatTimeoutSeconds, queueLagWarnSeconds, workers: workerRows, queue };
 }
 
 export async function getJobRunContext(pool: Pool, runId: string): Promise<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string; maxCommits: number; expectedCommitCount: number; currentStep: string } | null> {

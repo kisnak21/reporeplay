@@ -17,6 +17,7 @@ export async function GET(request: Request) {
         status: health.status,
         checkedAt: health.checkedAt,
         heartbeatTimeoutSeconds: health.heartbeatTimeoutSeconds,
+        queueLagWarnSeconds: health.queueLagWarnSeconds,
         workers: health.workers.map((worker) => ({ ...worker, lastHeartbeatAt: worker.lastHeartbeatAt.toISOString(), lastClaimAt: worker.lastClaimAt?.toISOString() ?? null, lastSuccessAt: worker.lastSuccessAt?.toISOString() ?? null })),
         queue: health.queue,
       },

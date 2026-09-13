@@ -39,6 +39,7 @@ describe("worker health", () => {
     await expect(getWorkerHealth(pool, 120, 60)).resolves.toMatchObject({
       status: "DEGRADED",
       heartbeatTimeoutSeconds: 120,
+      queueLagWarnSeconds: 60,
       workers: [{ workerId: "worker-a", activeJobCount: 1, heartbeatAgeSeconds: 3 }],
       queue: { dueJobs: 2, expiredJobs: 0, oldestDueSeconds: 90 },
     });

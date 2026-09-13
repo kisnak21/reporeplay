@@ -13,7 +13,46 @@ import { validateRun } from "../src/server/processing/validate-run";
 import { getRunResumePlan } from "../src/server/jobs/resume-plan";
 import { startJobHeartbeat, type HeartbeatController } from "./heartbeat";
 import { createWorkerId } from "./identity";
+import { writeWorkerLog, type WorkerLogContext } from "./logging";
 import { startSweeper } from "./sweeper";
+
+const PROCESS_VERSION = "0.1.0";
+
+function jobLogContext(job: ClaimedJob): WorkerLogContext {
+  return {
+    workerId: job.workerId,
+    jobId: job.jobId,
+    runId: job.runId,
+    leaseGeneration: job.leaseGeneration,
+    attemptCount: job.attemptCount,
+    maxAttempts: job.maxAttempts,
+  };
+}
+
+function errorType(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
+function logRetryResult(
+  job: ClaimedJob,
+  error: unknown,
+  errorCode: string,
+  result: "RETRYABLE" | "FAILED" | "LEASE_LOST",
+): void {
+  const level = result === "FAILED" ? "error" : "warn";
+  const event = result === "RETRYABLE"
+    ? "worker.job.retry_scheduled"
+    : result === "FAILED"
+      ? "worker.job.failed"
+      : "worker.job.lease_lost";
+
+  writeWorkerLog(level, event, {
+    ...jobLogContext(job),
+    errorCode,
+    errorType: errorType(error),
+    resultStatus: result,
+  });
+}
 
 async function raceWithHeartbeat<T>(operation: Promise<T>, heartbeat: HeartbeatController): Promise<T> {
   const leaseFailure = heartbeat.lostLease.then(() => {
@@ -37,21 +76,30 @@ async function startWorker(): Promise<void> {
   async function shutdown(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+    writeWorkerLog("info", "worker.shutdown_started", { workerId });
     sweeper.stop();
     await Promise.race([Promise.allSettled(active), sleep(environment.WORKER_GRACEFUL_SHUTDOWN_MS)]);
     await pool.end();
+    writeWorkerLog("info", "worker.shutdown_complete", { workerId });
   }
 
-  process.once("SIGINT", () => void shutdown());
-  process.once("SIGTERM", () => void shutdown());
-  await recordWorkerHeartbeat(pool, workerId, "0.1.0");
-  process.stdout.write(`RepoReplay worker ${workerId} ready\n`);
+  process.once("SIGINT", () => {
+    writeWorkerLog("info", "worker.shutdown_requested", { workerId, shutdownSignal: "SIGINT" });
+    void shutdown();
+  });
+  process.once("SIGTERM", () => {
+    writeWorkerLog("info", "worker.shutdown_requested", { workerId, shutdownSignal: "SIGTERM" });
+    void shutdown();
+  });
+  await recordWorkerHeartbeat(pool, workerId, PROCESS_VERSION);
+  writeWorkerLog("info", "worker.ready", { workerId, processVersion: PROCESS_VERSION });
 
   while (!shuttingDown) {
-    await recordWorkerHeartbeat(pool, workerId, "0.1.0");
+    await recordWorkerHeartbeat(pool, workerId, PROCESS_VERSION);
     while (!shuttingDown && active.size < environment.WORKER_CONCURRENCY) {
       const job = await claimNextDueJob(pool, workerId, { leaseSeconds: environment.JOB_LEASE_SECONDS, maxRunningJobs: environment.MAX_GLOBAL_RUNNING_JOBS });
       if (!job) break;
+      writeWorkerLog("info", "worker.job.claimed", jobLogContext(job));
       const execution = executeJob(job).finally(() => active.delete(execution));
       active.add(execution);
     }
@@ -67,6 +115,7 @@ async function startWorker(): Promise<void> {
       if (resume.activateRun) {
         const completed = await completeJob(pool, job);
         if (!completed) throw new RepoReplayError("PROCESSING_FAILED", "Failed to complete job: lease lost.");
+        writeWorkerLog("info", "worker.job.succeeded", jobLogContext(job));
         return;
       }
 
@@ -115,27 +164,71 @@ async function startWorker(): Promise<void> {
       }
       const completed = await completeJob(pool, job);
       if (!completed) throw new RepoReplayError("PROCESSING_FAILED", "Failed to complete job: lease lost.");
+      writeWorkerLog("info", "worker.job.succeeded", jobLogContext(job));
     } catch (error) {
-      if (await finalizeCancellation(pool, job)) return;
+      if (await finalizeCancellation(pool, job)) {
+        writeWorkerLog("info", "worker.job.cancelled", jobLogContext(job));
+        return;
+      }
+      const code = error instanceof RepoReplayError ? error.code : "PROCESSING_FAILED";
+      writeWorkerLog(error instanceof RepoReplayError ? "warn" : "error", "worker.job.error", {
+        ...jobLogContext(job),
+        errorCode: code,
+        errorType: errorType(error),
+      });
       if (error instanceof RepoReplayError) {
         if (error.code === "GITHUB_RATE_LIMITED") {
           const resetAt = error.details.resetAt ? new Date(String(error.details.resetAt)) : new Date(Date.now() + 60_000);
-          await markRateLimited(pool, job, resetAt, error.code, error.message);
+          const updated = await markRateLimited(pool, job, resetAt, error.code, error.message);
+          if (updated) {
+            writeWorkerLog("warn", "worker.job.rate_limited", {
+              ...jobLogContext(job),
+              errorCode: error.code,
+              errorType: errorType(error),
+              resultStatus: "WAITING_RATE_LIMIT",
+              nextAttemptAt: resetAt.toISOString(),
+            });
+          } else {
+            writeWorkerLog("warn", "worker.job.lease_lost", {
+              ...jobLogContext(job),
+              errorCode: error.code,
+              resultStatus: "LEASE_LOST",
+            });
+          }
           return;
         }
         if (error.code === "GITHUB_UNAVAILABLE" || error.code === "GITHUB_DATA_TRUNCATED") {
           const result = await scheduleRetry(pool, job, retryPolicy, error.code, error.message);
-          if (result === "LEASE_LOST") return;
+          logRetryResult(job, error, error.code, result);
           return;
         }
         if (error.code === "REPOSITORY_LIMIT_EXCEEDED" || error.code === "REPOSITORY_NOT_FOUND" || error.code === "EMPTY_REPOSITORY" || error.code === "UNSUPPORTED_REPOSITORY") {
-          await failJob(pool, job, error.code, error.message);
+          const failed = await failJob(pool, job, error.code, error.message);
+          writeWorkerLog(failed ? "error" : "warn", failed ? "worker.job.failed" : "worker.job.lease_lost", {
+            ...jobLogContext(job),
+            errorCode: error.code,
+            errorType: errorType(error),
+            resultStatus: failed ? "FAILED" : "LEASE_LOST",
+          });
           return;
         }
-        await failJob(pool, job, error.code, error.message);
+        const failed = await failJob(pool, job, error.code, error.message);
+        writeWorkerLog(failed ? "error" : "warn", failed ? "worker.job.failed" : "worker.job.lease_lost", {
+          ...jobLogContext(job),
+          errorCode: error.code,
+          errorType: errorType(error),
+          resultStatus: failed ? "FAILED" : "LEASE_LOST",
+        });
         return;
       }
-      await scheduleRetry(pool, job, retryPolicy, "PROCESSING_FAILED", error instanceof Error ? error.message : "Unknown processing failure");
+      const result = await scheduleRetry(
+        pool,
+        job,
+        retryPolicy,
+        "PROCESSING_FAILED",
+        error instanceof Error ? error.message : "Unknown processing failure",
+      );
+      logRetryResult(job, error, "PROCESSING_FAILED", result);
     } finally {
       heartbeat.stop();
     }
@@ -152,7 +245,9 @@ async function startWorker(): Promise<void> {
 }
 
 startWorker().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : "Unknown worker startup failure";
-  process.stderr.write(`${message}\n`);
+  writeWorkerLog("error", "worker.startup_failed", {
+    errorCode: error instanceof RepoReplayError ? error.code : undefined,
+    errorType: errorType(error),
+  });
   process.exitCode = 1;
 });

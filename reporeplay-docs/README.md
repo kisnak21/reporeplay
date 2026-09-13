@@ -104,6 +104,7 @@ Technology choices remain provisional until the application repository is initia
 | `ARCHITECTURE.md` | Web, worker, ingestion, activation, and recovery design |
 | `DATABASE_SCHEMA.md` | Persistence model and invariants |
 | `API_SPEC.md` | REST contracts and errors |
+| `OPERATIONS_RUNBOOK.md` | Health signals, worker logs, and recovery procedures |
 | `UX_FLOW.md` | Screens, states, and accessibility behavior |
 | `ROADMAP.md` | Risk-ordered delivery phases |
 | `TASKS.md` | Testable engineering work |

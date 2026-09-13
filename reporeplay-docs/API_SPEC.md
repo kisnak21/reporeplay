@@ -427,7 +427,7 @@ Public health discloses only service availability. Protected worker health may i
 
 `GET /api/health` returns `200` with `{ data: { status: "ok", checks: { database: "ok" } } }` when the web process can reach PostgreSQL, and returns `503 SERVICE_UNAVAILABLE` otherwise.
 
-`GET /api/admin/health/worker` requires `Authorization: Bearer <ADMIN_HEALTH_TOKEN>`. If `ADMIN_HEALTH_TOKEN` is unset, or the presented token is missing or invalid, it returns `401 ADMIN_UNAUTHORIZED`. An authorized response contains `HEALTHY`, `DEGRADED`, or `OFFLINE` status, heartbeat timeout, worker rows, active job counts, and queue due/expired/oldest-lag metrics. It returns `503 SERVICE_UNAVAILABLE` when environment validation or the health query cannot complete.
+`GET /api/admin/health/worker` requires `Authorization: Bearer <ADMIN_HEALTH_TOKEN>`. If `ADMIN_HEALTH_TOKEN` is unset, or the presented token is missing or invalid, it returns `401 ADMIN_UNAUTHORIZED`. An authorized response contains `HEALTHY`, `DEGRADED`, or `OFFLINE` status, heartbeat and queue-lag warning thresholds, worker rows, active job counts, and queue due/expired/oldest-lag metrics. It returns `503 SERVICE_UNAVAILABLE` when environment validation or the health query cannot complete.
 
 ## 14. Error Codes
 

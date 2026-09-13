@@ -2,7 +2,7 @@
 
 Every task is complete only when its acceptance test passes. Tests are built with the feature, not deferred to a final testing epic.
 
-Tracking note (2026-09-05): checked tasks below reflect implementation evidence in the current source and test suite. The latest synchronized slices are timeline pagination and recovery (`31011e7`), commit readability (`20c429a`), the accessible commit drawer (`527af51`), accessibility remediation (`0cc6ec4`), processing recovery states (`6a95f4c`), manual refresh with retained snapshots (`0840967`), and ambiguous-root refresh configuration.
+Tracking note (2026-09-13): checked tasks below reflect implementation evidence in the current source and test suite. Recent pushed slices include query indexing (`baeed76`), accessibility remediation (`806a130`), and refresh/change-evidence E2E coverage (`2b09fc0`). Database integration checks still require a configured test database.
 
 ## Epic 1: Contracts and Foundation
 
@@ -234,9 +234,9 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 - [ ] Configure GitHub App secrets and token handling.
 - [ ] Configure worker concurrency, leases, limits, throttles, and retention.
 - [x] Add public web health and protected worker health.
-- [ ] Add structured error logging and queue-lag monitoring.
+- [x] Add structured worker error logging and expose the queue-lag alert threshold with worker health.
 - [ ] Measure GitHub request budget for fixture sizes and showcase import.
-- [ ] Write worker interruption, stuck-job, rate-limit, rollback, and deletion recovery procedures.
+- [x] Write worker interruption, stuck-job, rate-limit, rollback, and deletion recovery procedures in `OPERATIONS_RUNBOOK.md`.
 - [ ] Exercise procedures in production-like conditions.
 
 **Acceptance:** Restarting either process does not lose a run, and health data distinguishes web, database, worker, and queue failures.

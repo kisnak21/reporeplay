@@ -4,6 +4,7 @@ import type { RetryPolicy } from "../src/server/jobs/retry-policy";
 import { inTransaction } from "../src/server/db/transaction";
 import { cleanupRequestRecords } from "../src/server/security/import-controls";
 import { cleanupRetainedRuns, type RunRetentionPolicy } from "../src/server/jobs/run-retention";
+import { writeWorkerLog } from "./logging";
 
 export interface SweeperController { stop(): void }
 
@@ -15,7 +16,11 @@ export function startSweeper(pool: Pool, intervalMs: number, retryPolicy: RetryP
     void recoverExpiredJobs(pool, retryPolicy)
       .then(() => inTransaction(pool, cleanupRequestRecords))
       .then(() => cleanupRetainedRuns(pool, retentionPolicy))
-      .catch(() => process.stderr.write("Worker maintenance sweep failed; it will retry on the next interval.\n"))
+      .catch((error: unknown) => {
+        writeWorkerLog("error", "worker.sweep_failed", {
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        });
+      })
       .finally(() => { sweeping = false; });
   }, intervalMs);
   timer.unref();
