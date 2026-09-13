@@ -235,7 +235,8 @@ Tracking note (2026-09-13): checked tasks below reflect implementation evidence 
 - [ ] Configure worker concurrency, leases, limits, throttles, and retention.
 - [x] Add public web health and protected worker health.
 - [x] Add structured worker error logging and expose the queue-lag alert threshold with worker health.
-- [ ] Measure GitHub request budget for fixture sizes and showcase import.
+- [x] Measure GitHub REST request counts for linear and showcase-sized fixtures; document the baseline and its limits in `GITHUB_REQUEST_BUDGET.md`.
+- [ ] Measure actual request and rate-limit deltas for a selected public showcase import.
 - [x] Write worker interruption, stuck-job, rate-limit, rollback, and deletion recovery procedures in `OPERATIONS_RUNBOOK.md`.
 - [ ] Exercise procedures in production-like conditions.
 

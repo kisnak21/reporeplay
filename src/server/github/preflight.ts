@@ -21,7 +21,7 @@ export async function runPreflight(input: PreflightInput) {
   }
   let firstParentCount: number;
   try {
-    const chain = await traverseFirstParent(input.source, input.owner, input.name, headSha, input.maxCommits + 1);
+    const chain = await traverseFirstParent(input.source, input.owner, input.name, headSha, input.maxCommits + 1, undefined, commit);
     firstParentCount = chain.commits.length;
     if (firstParentCount > input.maxCommits) throw new RepoReplayError("REPOSITORY_LIMIT_EXCEEDED", "Repository exceeds commit limit.", { limit: "firstParentCommits", actual: firstParentCount, allowed: input.maxCommits });
   } catch (error) {
