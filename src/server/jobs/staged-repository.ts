@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { RepoReplayError } from "@/server/github/errors";
+import type { FirstParentCommit } from "@/server/processing/first-parent";
 import type { DependencyDetection, DetectorWarning, RouteDetection } from "@/server/processing/detector-types";
 
 export interface JobLease {
@@ -32,6 +33,53 @@ export interface CommitInput {
   changedFileCount: number;
   externalUrl: string;
   files: Array<{ id: string; path: string; previousPath: string | null; status: "ADDED" | "MODIFIED" | "REMOVED" | "RENAMED"; additions: number; deletions: number; changes: number }>;
+}
+
+export async function loadStagedHistory(pool: Pool, runId: string): Promise<FirstParentCommit[]> {
+  const commits = await pool.query<{
+    sha: string;
+    firstParentSha: string | null;
+    treeSha: string;
+    sequence: number;
+    message: string;
+    authorName: string | null;
+    authoredAt: Date | null;
+    committedAt: Date;
+    additions: number;
+    deletions: number;
+    changedFileCount: number;
+    externalUrl: string;
+  }>(
+    `SELECT "sha","firstParentSha","treeSha","sequence","message","authorName","authoredAt","committedAt","additions","deletions","changedFileCount","externalUrl"
+     FROM "RunCommit" WHERE "runId"=$1 ORDER BY "sequence"`,
+    [runId],
+  );
+  const files = await pool.query<{
+    sequence: number;
+    path: string;
+    previousPath: string | null;
+    status: "ADDED" | "MODIFIED" | "REMOVED" | "RENAMED";
+    additions: number;
+    deletions: number;
+    changes: number;
+  }>(
+    `SELECT c."sequence",f."path",f."previousPath",f."status"::text AS "status",f."additions",f."deletions",f."changes"
+     FROM "CommitFile" f JOIN "RunCommit" c ON c."runId"=f."runId" AND c."id"=f."runCommitId"
+     WHERE c."runId"=$1 ORDER BY c."sequence",f."path"`,
+    [runId],
+  );
+  const filesBySequence = new Map<number, FirstParentCommit["files"]>();
+  for (const file of files.rows) {
+    const commitFiles = filesBySequence.get(file.sequence) ?? [];
+    commitFiles.push({ path: file.path, previousPath: file.previousPath, status: file.status, additions: file.additions, deletions: file.deletions, changes: file.changes });
+    filesBySequence.set(file.sequence, commitFiles);
+  }
+
+  return commits.rows.map((commit) => ({
+    ...commit,
+    parentShas: commit.firstParentSha ? [commit.firstParentSha] : [],
+    files: filesBySequence.get(commit.sequence) ?? [],
+  }));
 }
 
 export async function checkpointRun(client: PoolClient, input: CheckpointInput): Promise<boolean> {

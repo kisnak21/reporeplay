@@ -224,9 +224,9 @@ export async function getWorkerHealth(pool: Pool, heartbeatTimeoutSeconds: numbe
   return { status, checkedAt: new Date(), heartbeatTimeoutSeconds, workers: workerRows, queue };
 }
 
-export async function getJobRunContext(pool: Pool, runId: string): Promise<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string; maxCommits: number; expectedCommitCount: number } | null> {
-  const result = await pool.query<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string | null; maxCommits: number; expectedCommitCount: number | null }>(
-    `SELECT r."repositoryId", repo."owner", repo."name", r."headSha", r."defaultBranch", r."selectedAppRoot", r."maxCommitLimit" AS "maxCommits", r."expectedCommitCount" FROM "ProcessingRun" r JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE r."id"=$1`,
+export async function getJobRunContext(pool: Pool, runId: string): Promise<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string; maxCommits: number; expectedCommitCount: number; currentStep: string } | null> {
+  const result = await pool.query<{ repositoryId: string; owner: string; name: string; headSha: string; defaultBranch: string; selectedAppRoot: string | null; maxCommits: number; expectedCommitCount: number | null; currentStep: string }>(
+    `SELECT r."repositoryId", repo."owner", repo."name", r."headSha", r."defaultBranch", r."selectedAppRoot", r."maxCommitLimit" AS "maxCommits", r."expectedCommitCount",r."currentStep"::text AS "currentStep" FROM "ProcessingRun" r JOIN "Repository" repo ON repo."id"=r."repositoryId" WHERE r."id"=$1`,
     [runId],
   );
   const row = result.rows[0];

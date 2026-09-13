@@ -41,7 +41,7 @@ export async function validateRun(pool: Pool, job: JobLease): Promise<boolean> {
     );
     const run = runResult.rows[0];
     if (!run) failValidation("Run context not found during validation.");
-    if (run.status !== "RUNNING" || run.currentStep !== "DETECT_ROUTES") failValidation("Run reached validation from an unexpected state.", { status: run.status, step: run.currentStep });
+    if (run.status !== "RUNNING" || !["DETECT_ROUTES", "VALIDATE_RUN"].includes(run.currentStep)) failValidation("Run reached validation from an unexpected state.", { status: run.status, step: run.currentStep });
     if (run.expectedCommitCount === null) failValidation("Run is missing its frozen expected commit count.");
 
     const commitResult = await client.query<RunCommitValidationRow>(

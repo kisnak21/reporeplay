@@ -95,7 +95,7 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 - [x] Persist complete changed-file status, rename source, additions, and deletions.
 - [x] Checkpoint after idempotent commit batches.
 - [x] Reject chain drift, count mismatch, and incomplete file evidence.
-- [ ] Test resume at every checkpoint boundary.
+- [x] Test resume at every checkpoint boundary.
 
 **Acceptance:** Fixture histories exactly match expected sequence, parent, and file-diff evidence after clean and interrupted runs.
 
@@ -150,8 +150,8 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 - [x] Mark run and job success in the activation transaction.
 - [ ] Retain active plus one previous successful run.
 - [ ] Bound failed-run retention.
-- [ ] Test transaction rollback at every activation write.
-- [ ] Test that failed validation leaves active pointers unchanged.
+- [x] Test transaction rollback at every activation write.
+- [x] Test that failed validation leaves active pointers unchanged.
 
 **Acceptance:** Readers observe either the old complete snapshot or the new complete snapshot, never a mixture.
 

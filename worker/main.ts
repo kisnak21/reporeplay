@@ -8,8 +8,9 @@ import { RepoReplayError } from "../src/server/github/errors";
 import { ingestFirstParentHistory } from "../src/server/processing/ingest-first-parent";
 import { persistCategoriesForRun } from "../src/server/processing/classifier";
 import { detectDependenciesForHistory, detectRoutesForHistory } from "../src/server/processing/detectors";
-import { advanceRunStep, persistDetectorOutput, persistIngestionMetadata, updateFetchProgress } from "../src/server/jobs/staged-repository";
+import { advanceRunStep, loadStagedHistory, persistDetectorOutput, persistIngestionMetadata, updateFetchProgress } from "../src/server/jobs/staged-repository";
 import { validateRun } from "../src/server/processing/validate-run";
+import { getRunResumePlan } from "../src/server/jobs/resume-plan";
 import { startJobHeartbeat, type HeartbeatController } from "./heartbeat";
 import { createWorkerId } from "./identity";
 import { startSweeper } from "./sweeper";
@@ -59,35 +60,56 @@ async function startWorker(): Promise<void> {
     try {
       const context = await getJobRunContext(pool, job.runId);
       if (!context) throw new RepoReplayError("PROCESSING_FAILED", "Run context not found.");
+      const resume = getRunResumePlan(context.currentStep);
+      if (resume.activateRun) {
+        const completed = await completeJob(pool, job);
+        if (!completed) throw new RepoReplayError("PROCESSING_FAILED", "Failed to complete job: lease lost.");
+        return;
+      }
+
       const source = createGitHubSourceFromEnvironment(environment);
-      const fetchStepStarted = await setRunStep(pool, job, "FETCH_COMMITS");
-      if (!fetchStepStarted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to start commit fetch: lease lost.");
-      const ingestion = await raceWithHeartbeat(
-        ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits, expectedCommitCount: context.expectedCommitCount, onCommitFetched: async (fetchedCommitCount) => {
-          const updated = await updateFetchProgress(pool, job, fetchedCommitCount);
-          if (!updated) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist fetch progress: lease lost.");
-        } }),
-        heartbeat,
-      );
-      const metadataPersisted = await persistIngestionMetadata(pool, job, { rootSha: ingestion.rootSha, expectedCommitCount: ingestion.count });
-      if (!metadataPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist ingestion metadata: lease lost.");
+      let commits;
+      if (resume.fetchCommits) {
+        const fetchStepStarted = await setRunStep(pool, job, "FETCH_COMMITS");
+        if (!fetchStepStarted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to start commit fetch: lease lost.");
+        const ingestion = await raceWithHeartbeat(
+          ingestFirstParentHistory({ source, pool, job, owner: context.owner, name: context.name, headSha: context.headSha, maxCommits: context.maxCommits, expectedCommitCount: context.expectedCommitCount, onCommitFetched: async (fetchedCommitCount) => {
+            const updated = await updateFetchProgress(pool, job, fetchedCommitCount);
+            if (!updated) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist fetch progress: lease lost.");
+          } }),
+          heartbeat,
+        );
+        const metadataPersisted = await persistIngestionMetadata(pool, job, { rootSha: ingestion.rootSha, expectedCommitCount: ingestion.count });
+        if (!metadataPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist ingestion metadata: lease lost.");
+        commits = ingestion.commits;
+      } else {
+        commits = await loadStagedHistory(pool, job.runId);
+      }
 
-      await raceWithHeartbeat(
-        persistCategoriesForRun(pool, { jobId: job.jobId, runId: job.runId, repositoryId: job.repositoryId, workerId: job.workerId, leaseGeneration: job.leaseGeneration, step: "CLASSIFY_COMMITS", sequence: 0 }),
-        heartbeat,
-      );
+      if (resume.classifyCommits) {
+        await raceWithHeartbeat(
+          persistCategoriesForRun(pool, { jobId: job.jobId, runId: job.runId, repositoryId: job.repositoryId, workerId: job.workerId, leaseGeneration: job.leaseGeneration, step: "CLASSIFY_COMMITS", sequence: 0 }),
+          heartbeat,
+        );
+      }
 
-      const historyInput = { source, owner: context.owner, name: context.name, selectedAppRoot: context.selectedAppRoot, commits: ingestion.commits };
-      const dependencyOutput = await raceWithHeartbeat(detectDependenciesForHistory(historyInput), heartbeat);
-      const dependenciesPersisted = await persistDetectorOutput(pool, { ...job, step: "DETECT_DEPENDENCIES", output: { dependencies: dependencyOutput.changes, warnings: dependencyOutput.warnings } });
-      if (!dependenciesPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist dependency detection: lease lost.");
+      const historyInput = { source, owner: context.owner, name: context.name, selectedAppRoot: context.selectedAppRoot, commits };
+      if (resume.detectDependencies) {
+        const dependencyOutput = await raceWithHeartbeat(detectDependenciesForHistory(historyInput), heartbeat);
+        const dependenciesPersisted = await persistDetectorOutput(pool, { ...job, step: "DETECT_DEPENDENCIES", output: { dependencies: dependencyOutput.changes, warnings: dependencyOutput.warnings } });
+        if (!dependenciesPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist dependency detection: lease lost.");
+      }
 
-      const routeOutput = await raceWithHeartbeat(detectRoutesForHistory(historyInput), heartbeat);
-      const routesPersisted = await persistDetectorOutput(pool, { ...job, step: "DETECT_ROUTES", output: routeOutput });
-      if (!routesPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist route detection: lease lost.");
+      if (resume.detectRoutes) {
+        const routeOutput = await raceWithHeartbeat(detectRoutesForHistory(historyInput), heartbeat);
+        const routesPersisted = await persistDetectorOutput(pool, { ...job, step: "DETECT_ROUTES", output: routeOutput });
+        if (!routesPersisted) throw new RepoReplayError("PROCESSING_FAILED", "Failed to persist route detection: lease lost.");
+      }
 
-      const validated = await raceWithHeartbeat(validateRun(pool, job), heartbeat);
-      if (!validated) throw new RepoReplayError("PROCESSING_FAILED", "Failed to validate run: lease lost.");
+      if (resume.validateRun) {
+        const validated = await raceWithHeartbeat(validateRun(pool, job), heartbeat);
+        if (!validated) throw new RepoReplayError("PROCESSING_FAILED", "Failed to validate run: lease lost.");
+      }
       const completed = await completeJob(pool, job);
       if (!completed) throw new RepoReplayError("PROCESSING_FAILED", "Failed to complete job: lease lost.");
     } catch (error) {

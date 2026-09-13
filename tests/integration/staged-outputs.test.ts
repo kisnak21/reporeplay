@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { GitHubRepositorySource } from "../../src/server/github/source";
 import { claimNextDueJob } from "../../src/server/jobs/repository";
-import { advanceRunStep, persistDetectorOutput, updateFetchProgress, writeCheckpointedCommitBatch } from "../../src/server/jobs/staged-repository";
+import { advanceRunStep, loadStagedHistory, persistDetectorOutput, updateFetchProgress, writeCheckpointedCommitBatch, type CommitInput } from "../../src/server/jobs/staged-repository";
 import { persistCategoriesForRun } from "../../src/server/processing/classifier";
+import { ingestFirstParentHistory } from "../../src/server/processing/ingest-first-parent";
 import { validateRun } from "../../src/server/processing/validate-run";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -27,6 +29,83 @@ describeDatabase("staged output persistence", () => {
     expect(await writeCheckpointedCommitBatch(pool, checkpoint, [commit])).toBe(true);
     const result = await pool.query<{ count: number; checkpoint: number }>(`SELECT (SELECT COUNT(*)::int FROM "RunCommit" WHERE "runId"=$1) AS count,(SELECT "checkpointSequence" FROM "ProcessingRun" WHERE "id"=$1) AS checkpoint`, [claim.runId]);
     expect(result.rows[0]).toEqual({ count: 1, checkpoint: 0 });
+    await cleanup(pool, fixture.repositoryId);
+  });
+
+  it("reconstructs ordered detector history and file evidence from staged commits", async () => {
+    const fixture = await createFixture(pool, "staged-history");
+    const claim = await claimNextDueJob(pool, "history-reader", 60);
+    expect(claim).not.toBeNull();
+    if (!claim) return;
+    const commit = createCommit(claim.runId, 0);
+    commit.changedFileCount = 1;
+    commit.files.push({ id: randomUUID(), path: "package.json", previousPath: null, status: "ADDED", additions: 1, deletions: 0, changes: 1 });
+    await writeCheckpointedCommitBatch(pool, { ...claim, step: "FETCH_COMMITS", sequence: 0 }, [commit]);
+
+    const history = await loadStagedHistory(pool, claim.runId);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      sha: "sha-0",
+      firstParentSha: null,
+      parentShas: [],
+      treeSha: "tree-0",
+      sequence: 0,
+      changedFileCount: 1,
+      files: [{ path: "package.json", previousPath: null, status: "ADDED", additions: 1, deletions: 0, changes: 1 }],
+    });
+    await cleanup(pool, fixture.repositoryId);
+  });
+
+  it("continues ingestion after the last persisted commit batch", async () => {
+    const fixture = await createFixture(pool, "ingestion-resume");
+    const claim = await claimNextDueJob(pool, "ingestion-resumer", 60);
+    expect(claim).not.toBeNull();
+    if (!claim) return;
+    await pool.query(`UPDATE "ProcessingRun" SET "headSha"='sha-2',"expectedCommitCount"=3 WHERE "id"=$1`, [claim.runId]);
+    const root = createCommit(claim.runId, 0);
+    root.sha = "sha-0";
+    root.shortSha = "sha-0";
+    root.treeSha = "tree-sha-0";
+    const checkpoint = createCommit(claim.runId, 1);
+    checkpoint.sha = "sha-1";
+    checkpoint.shortSha = "sha-1";
+    checkpoint.treeSha = "tree-sha-1";
+    checkpoint.firstParentSha = "sha-0";
+    await writeCheckpointedCommitBatch(pool, { ...claim, step: "FETCH_COMMITS", sequence: 0 }, [root, checkpoint]);
+
+    const requestedShas: string[] = [];
+    const source: GitHubRepositorySource = {
+      getRepository: async () => { throw new Error("unused in ingestion resume"); },
+      getBranchHead: async () => { throw new Error("unused in ingestion resume"); },
+      getCommit: async (_owner, _name, sha) => {
+        requestedShas.push(sha);
+        if (sha !== "sha-2") throw new Error(`Unexpected history fetch for ${sha}`);
+        return { sha: "sha-2", treeSha: "tree-sha-2", parentShas: ["sha-1"], message: "feat: resumed commit", authorName: null, authoredAt: null, committedAt: new Date(), externalUrl: "https://github.com/test", additions: 0, deletions: 0, changedFileCount: 0, files: [] };
+      },
+      getTree: async () => ({ treeSha: "unused", paths: [], complete: true }),
+      getFile: async () => null,
+      getRateLimit: async () => ({ remaining: 1, resetAt: new Date() }),
+    };
+    const progress: number[] = [];
+
+    const result = await ingestFirstParentHistory({
+      source,
+      pool,
+      job: claim,
+      owner: "test",
+      name: "repo",
+      headSha: "sha-2",
+      maxCommits: 500,
+      expectedCommitCount: 3,
+      batchSize: 1,
+      onCommitFetched: async (count) => { progress.push(count); },
+    });
+
+    expect(requestedShas).toEqual(["sha-2"]);
+    expect(progress).toEqual([2, 3]);
+    expect(result).toMatchObject({ rootSha: "sha-0", count: 3, commits: [{ sha: "sha-0", sequence: 0 }, { sha: "sha-1", sequence: 1 }, { sha: "sha-2", sequence: 2 }] });
+    const checkpointResult = await pool.query<{ sequence: number }>(`SELECT "checkpointSequence" AS "sequence" FROM "ProcessingRun" WHERE "id"=$1`, [claim.runId]);
+    expect(checkpointResult.rows[0].sequence).toBe(2);
     await cleanup(pool, fixture.repositoryId);
   });
 
@@ -106,6 +185,26 @@ describeDatabase("staged output persistence", () => {
     await cleanup(pool, fixture.repositoryId);
   });
 
+  it("keeps the active snapshot pointers unchanged when run validation fails", async () => {
+    const fixture = await createFixture(pool, "validation-failure");
+    const activeRunId = await createSuccessfulSnapshot(pool, fixture.repositoryId, "active-before-failed-validation");
+    const previousRunId = await createSuccessfulSnapshot(pool, fixture.repositoryId, "previous-before-failed-validation");
+    await pool.query(`UPDATE "Repository" SET "activeRunId"=$1,"previousRunId"=$2,"availability"='READY' WHERE "id"=$3`, [activeRunId, previousRunId, fixture.repositoryId]);
+    const claim = await claimNextDueJob(pool, "validation-worker", 60);
+    expect(claim).not.toBeNull();
+    if (!claim) return;
+    await pool.query(`UPDATE "ProcessingRun" SET "selectedAppRoot"='.',"rootSha"='root-sha',"headSha"='head-sha',"expectedCommitCount"=1,"currentStep"='DETECT_ROUTES' WHERE "id"=$1`, [claim.runId]);
+
+    await expect(validateRun(pool, claim)).rejects.toMatchObject({ code: "PROCESSING_FAILED" });
+
+    const result = await pool.query<{ activeRunId: string; previousRunId: string; runStatus: string; step: string }>(
+      `SELECT repo."activeRunId",repo."previousRunId",r."status"::text AS "runStatus",r."currentStep"::text AS "step" FROM "Repository" repo JOIN "ProcessingRun" r ON r."repositoryId"=repo."id" WHERE repo."id"=$1 AND r."id"=$2`,
+      [fixture.repositoryId, claim.runId],
+    );
+    expect(result.rows[0]).toEqual({ activeRunId, previousRunId, runStatus: "RUNNING", step: "DETECT_ROUTES" });
+    await cleanup(pool, fixture.repositoryId);
+  });
+
   it("cascades the staged graph when a run is deleted", async () => {
     const fixture = await createFixture(pool, "cascade");
     const commitId = randomUUID();
@@ -120,8 +219,9 @@ describeDatabase("staged output persistence", () => {
   });
 });
 
-function createCommit(runId: string, sequence: number) { return { runId, id: randomUUID(), sha: `sha-${sequence}`, shortSha: `sha-${sequence}`, firstParentSha: null, treeSha: `tree-${sequence}`, sequence, message: "test", authorName: null, authoredAt: null, committedAt: new Date(), additions: 0, deletions: 0, changedFileCount: 0, externalUrl: "https://github.com/test", files: [] as Array<{ id: string; path: string; previousPath: string | null; status: "ADDED" | "MODIFIED" | "REMOVED" | "RENAMED"; additions: number; deletions: number; changes: number }> }; }
+function createCommit(runId: string, sequence: number): CommitInput { return { runId, id: randomUUID(), sha: `sha-${sequence}`, shortSha: `sha-${sequence}`, firstParentSha: null, treeSha: `tree-${sequence}`, sequence, message: "test", authorName: null, authoredAt: null, committedAt: new Date(), additions: 0, deletions: 0, changedFileCount: 0, externalUrl: "https://github.com/test", files: [] }; }
 async function createFixture(pool: Pool, suffix: string) { const id = `${suffix}-${randomUUID()}`; const result = await pool.query<{ repositoryId: string; runId: string }>(`WITH repo AS (INSERT INTO "Repository"("id","provider","externalId","owner","name","fullName","canonicalUrl","defaultBranch","updatedAt") VALUES(gen_random_uuid(),'GITHUB',$1,'test',$1,'test/'||$1,'https://github.com/test/'||$1,'main',CURRENT_TIMESTAMP) RETURNING "id"),run AS (INSERT INTO "ProcessingRun"("id","repositoryId","kind","status","defaultBranch","headSha","headFileCount","maxCommitLimit","maxHeadFileLimit","schemaVersion","classifierVersion","dependencyDetectorVersion","routeDetectorVersion","currentStep") SELECT gen_random_uuid(),"id",'IMPORT','QUEUED','main','head',1,500,25000,'1','1','1','1','DISCOVER_HISTORY' FROM repo RETURNING "id","repositoryId") INSERT INTO "ProcessingJob"("id","runId","status","updatedAt") SELECT gen_random_uuid(),"id",'QUEUED',CURRENT_TIMESTAMP FROM run RETURNING (SELECT "repositoryId" FROM run) "repositoryId","runId"`, [id]); return result.rows[0]; }
 async function createTerminalFixture(pool: Pool, repositoryId: string, suffix: string) { const result = await pool.query<{ id: string }>(`INSERT INTO "ProcessingRun"("id","repositoryId","kind","status","defaultBranch","headSha","headFileCount","maxCommitLimit","maxHeadFileLimit","schemaVersion","classifierVersion","dependencyDetectorVersion","routeDetectorVersion","currentStep") VALUES(gen_random_uuid(),$1,'IMPORT','FAILED','main',$2,1,500,25000,'1','1','1','1','DISCOVER_HISTORY') RETURNING "id"`, [repositoryId, suffix]); return result.rows[0].id; }
+async function createSuccessfulSnapshot(pool: Pool, repositoryId: string, headSha: string) { const result = await pool.query<{ id: string }>(`INSERT INTO "ProcessingRun"("id","repositoryId","kind","status","defaultBranch","headSha","headFileCount","maxCommitLimit","maxHeadFileLimit","schemaVersion","classifierVersion","dependencyDetectorVersion","routeDetectorVersion","currentStep") VALUES(gen_random_uuid(),$1,'IMPORT','SUCCEEDED','main',$2,1,500,25000,'1','1','1','1','COMPLETE') RETURNING "id"`, [repositoryId, headSha]); return result.rows[0].id; }
 async function cleanup(pool: Pool, repositoryId: string) { await pool.query(`DELETE FROM "Repository" WHERE "id"=$1`, [repositoryId]); }
-async function cleanupFixtures(pool: Pool) { await pool.query(`DELETE FROM "Repository" WHERE "externalId" LIKE 'replay-%' OR "externalId" LIKE 'stale-%' OR "externalId" LIKE 'cross-%' OR "externalId" LIKE 'cascade-%' OR "externalId" LIKE 'detectors-%' OR "externalId" LIKE 'validation-%'`); }
+async function cleanupFixtures(pool: Pool) { await pool.query(`DELETE FROM "Repository" WHERE "externalId" LIKE 'replay-%' OR "externalId" LIKE 'stale-%' OR "externalId" LIKE 'cross-%' OR "externalId" LIKE 'cascade-%' OR "externalId" LIKE 'detectors-%' OR "externalId" LIKE 'validation-%' OR "externalId" LIKE 'staged-history-%' OR "externalId" LIKE 'ingestion-resume-%' OR "externalId" LIKE 'validation-failure-%'`); }
