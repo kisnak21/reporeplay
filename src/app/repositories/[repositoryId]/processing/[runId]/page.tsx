@@ -1,6 +1,12 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { LiveProcessingView } from "@/components/live-processing-view";
 import { ui } from "@/lib/ui";
+
+export async function generateMetadata({ params }: { params: Promise<{ repositoryId: string; runId: string }> }): Promise<Metadata> {
+  const { repositoryId, runId } = await params;
+  return { title: `Processing run ${runId} — ${repositoryId}` };
+}
 
 export default async function ProcessingPage({ params }: { params: Promise<{ repositoryId: string; runId: string }> }) {
   const { repositoryId, runId } = await params;

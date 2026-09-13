@@ -99,13 +99,16 @@ test("retries a failed run without creating a new import", async ({ page }) => {
   });
 
   await page.goto("/repositories/retry-repository/processing/retry-run");
+  await expect(page.getByRole("list", { name: "Processing steps" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry run" })).toBeVisible();
   const failureAlert = page.locator('[role="alert"]').filter({ hasText: "Refresh failed" });
   await expect(failureAlert).toContainText("Refresh failed");
   await expect(failureAlert).toContainText("GITHUB_UNAVAILABLE");
   await expect(failureAlert).toContainText("previous successful snapshot remains available");
-  await page.getByRole("button", { name: "Retry run" }).click();
+  await page.getByRole("button", { name: "Retry run" }).focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel run" })).toBeFocused();
   await expect(page.getByRole("status")).toContainText("Waiting for a worker to claim this run");
   expect(retryRequests).toBe(1);
   expect(importRequests).toBe(0);
@@ -216,14 +219,17 @@ test("filters timeline and opens commit evidence", async ({ page }) => {
 
   await page.getByLabel("Keyword").fill("missing commit");
   await expect(page.getByText("No commits match these filters.")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("No commits match these filters.");
   await page.getByRole("button", { name: "Clear filters" }).click();
-  await page.getByRole("link", { name: "feat: add account page" }).click();
+  const commitLink = page.getByRole("link", { name: "feat: add account page" });
+  await commitLink.click();
 
   await expect(page).toHaveURL(/commits\/9d8e7f6/);
   await expect(page.getByRole("heading", { level: 1, name: "feat: add account page" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Route evidence" })).toBeVisible();
   await page.getByRole("link", { name: "Close evidence" }).click();
   await expect(page).toHaveURL(/repositories\/demo$/);
+  await expect(commitLink).toBeFocused();
 });
 
 test("supports keyboard skip navigation", async ({ page }) => {
@@ -241,6 +247,76 @@ test("does not overflow supported fixture pages", async ({ page }) => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     expect(overflow, `${path} should not overflow`).toBe(false);
   }
+});
+
+test("uses a descriptive title for each showcase page", async ({ page }) => {
+  const pages = [
+    ["/", "Import a public repository | RepoReplay"],
+    ["/case-study", "Engineering case study | RepoReplay"],
+    ["/repositories/demo", "Repository timeline — acme/ledger | RepoReplay"],
+    ["/repositories/demo/processing/run-demo", "Processing run — acme/ledger | RepoReplay"],
+    ["/repositories/demo/commits/9d8e7f6", "Commit evidence — 9d8e7f6 | RepoReplay"],
+  ] as const;
+
+  for (const [path, title] of pages) {
+    await page.goto(path);
+    await expect(page).toHaveTitle(title);
+  }
+});
+
+test("keeps case-study text visible with WCAG text-spacing overrides at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/case-study");
+  await page.addStyleTag({ content: "html { line-height: 1.5 !important; } body * { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; } p { margin-bottom: 2em !important; }" });
+
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow, "text spacing should not create horizontal page scrolling").toBe(false);
+});
+
+test("reflows sampled pages with a 200 percent text-size override at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  for (const path of ["/", "/repositories/demo", "/repositories/demo/processing/run-demo", "/repositories/demo/commits/9d8e7f6", "/case-study"]) {
+    await page.goto(path);
+    await page.addStyleTag({ content: "html { font-size: 200% !important; }" });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    expect(overflow, `${path} should reflow at 200% text size`).toBe(false);
+  }
+
+  await page.route("**/api/repositories/text-resize-repo/runs/text-resize-run", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: {
+      id: "text-resize-run", kind: "REFRESH", status: "FAILED", step: "DETECT_ROUTES",
+      fetchedCommits: 8, processedCommits: 8, expectedCommits: 8,
+      worker: { status: "HEALTHY", lastHeartbeatAt: "2026-09-02T00:00:00Z", heartbeatAgeSeconds: 2 },
+      attemptCount: 4, nextAttemptAt: null, warnings: [],
+      error: { code: "GITHUB_UNAVAILABLE", message: "GitHub is temporarily unavailable." },
+    } }) });
+  });
+  await page.goto("/repositories/text-resize-repo/processing/text-resize-run");
+  await page.addStyleTag({ content: "html { font-size: 200% !important; }" });
+  const failedRunOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(failedRunOverflow, "failed processing should reflow at 200% text size").toBe(false);
+});
+
+test("keeps form-control borders above the non-text contrast minimum", async ({ page }) => {
+  await page.goto("/");
+  const contrast = await page.getByLabel("Public GitHub repository URL").evaluate((element) => {
+    function luminance(color: string): number {
+      const channels = color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number);
+      if (!channels || channels.length !== 3) throw new Error(`Cannot parse color: ${color}`);
+      const linear = channels.map((channel) => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+    }
+
+    const styles = getComputedStyle(element);
+    const border = luminance(styles.borderTopColor);
+    const fill = luminance(styles.backgroundColor);
+    return (Math.max(border, fill) + 0.05) / (Math.min(border, fill) + 0.05);
+  });
+
+  expect(contrast).toBeGreaterThanOrEqual(3);
 });
 
 test("wraps warning paths at mobile width", async ({ page }) => {
@@ -517,6 +593,10 @@ test("opens live commit evidence in an accessible drawer", async ({ page }) => {
   await page.goto("/repositories/drawer-repo/commits/abc1234");
   await expect(page.getByRole("dialog", { name: "feat: make retry recovery visible" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("link", { name: "Open on GitHub" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Close evidence" })).toBeFocused();
   await expect(page.getByText("Provenance")).toBeVisible();
   await expect(page.getByText("Retry failures without importing the repository again.", { exact: true })).toBeVisible();
 

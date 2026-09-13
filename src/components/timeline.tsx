@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CommitEvidence, DependencyChange, TimelineEventSummary, TimelineItem } from "@/server/contracts/api";
 import { commitCategories } from "@/server/contracts/processing";
 import type { TimelineFilters } from "@/lib/timeline-filters";
@@ -67,6 +67,32 @@ function EventSummary({ summary, dependencies, routes }: { summary: TimelineEven
 export function Timeline(props: TimelineProps) {
   const { commits, repositoryId = "demo", onClearFilters, onLoadOlder, hasNextPage = false,
     loadingOlder = false, mismatch, onReloadFromTop, loading = false, filterSearch = "" } = props;
+
+  useEffect(() => {
+    if (commits.length === 0) return;
+
+    const focusReturnKey = `reporeplay:timeline-focus:${repositoryId}`;
+    let targetHref: string | null;
+    try {
+      targetHref = window.sessionStorage.getItem(focusReturnKey);
+    } catch {
+      return;
+    }
+    if (!targetHref) return;
+
+    const targetUrl = new URL(targetHref, window.location.origin);
+    const trigger = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"))
+      .find((link) => link.pathname === targetUrl.pathname && link.search === targetUrl.search);
+    if (!trigger) return;
+
+    trigger.focus();
+    try {
+      window.sessionStorage.removeItem(focusReturnKey);
+    } catch {
+      return;
+    }
+  }, [commits, repositoryId]);
+
   return <div className="mt-6 grid grid-cols-[15rem_minmax(0,1fr)] gap-4 max-[800px]:grid-cols-1">
     <FilterPanel {...props} />
     <section aria-labelledby="timeline-title" aria-busy={loading || loadingOlder}>
@@ -75,7 +101,7 @@ export function Timeline(props: TimelineProps) {
       {mismatch ? <div className={`${ui.alert} mt-3`} role="alert"><strong>Newer snapshot available.</strong><p>{mismatch}</p>{onReloadFromTop ? <button className={`${ui.button} mt-3`} onClick={onReloadFromTop} type="button">Reload from top</button> : null}</div> : null}
       {loading ? <p className="mt-4 text-sm text-muted" role="status">Loading timeline...</p> : commits.length ? <div className="mt-3 border border-line bg-panel">
         {commits.map((commit) => <CommitRow commit={commit} repositoryId={repositoryId} filterSearch={filterSearch} key={commit.sha} />)}
-      </div> : <div className="mt-3 flex items-center justify-between gap-4 border border-line bg-panel p-5 max-[560px]:flex-col max-[560px]:items-stretch"><strong>No commits match these filters.</strong><button className={ui.button} onClick={onClearFilters} type="button">Clear filters</button></div>}
+      </div> : <div className="mt-3 flex items-center justify-between gap-4 border border-line bg-panel p-5 max-[560px]:flex-col max-[560px]:items-stretch"><p className="m-0" role="status" aria-live="polite">No commits match these filters.</p><button className={ui.button} onClick={onClearFilters} type="button">Clear filters</button></div>}
       {onLoadOlder && hasNextPage ? <button className={`${ui.button} mt-4 w-full`} disabled={loadingOlder || Boolean(mismatch)} onClick={onLoadOlder} type="button">{loadingOlder ? "Loading older commits..." : "Load older commits"}</button> : null}
     </section>
   </div>;
@@ -110,6 +136,7 @@ function CommitRow({ commit, repositoryId, filterSearch }: { commit: TimelineCom
       <h3><Link className="break-words font-mono font-semibold" href={href} onClick={(event) => {
         if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 		try { window.sessionStorage.setItem(scrollKey, String(window.scrollY)); } catch { return; }
+		try { window.sessionStorage.setItem(`reporeplay:timeline-focus:${repositoryId}`, href); } catch { return; }
       }}>{subject}</Link></h3>
       {body ? <p className="m-0 mt-1 max-w-[70ch] whitespace-pre-wrap break-words text-sm leading-6 text-muted">{body}</p> : null}
       <span className="mt-2 inline-block font-mono text-[.68rem] uppercase text-cyan">{commit.category.toLowerCase()}</span>

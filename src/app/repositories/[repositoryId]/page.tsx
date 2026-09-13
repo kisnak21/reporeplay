@@ -1,7 +1,13 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { LiveRepositoryView } from "@/components/live-repository-view";
 import { ui } from "@/lib/ui";
+
+export async function generateMetadata({ params }: { params: Promise<{ repositoryId: string }> }): Promise<Metadata> {
+  const { repositoryId } = await params;
+  return { title: `Repository timeline — ${repositoryId}` };
+}
 
 export default async function RepositoryPage({ params }: { params: Promise<{ repositoryId: string }> }) {
   const { repositoryId } = await params;

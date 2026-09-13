@@ -1,11 +1,11 @@
 export const ui = {
   shell: "mx-auto w-[min(calc(100%-2rem),92rem)] py-[clamp(2rem,5vw,5rem)] max-[560px]:w-[min(calc(100%-1rem),92rem)]",
   topbar: "border-b border-line bg-panel",
-  topbarInner: "mx-auto flex min-h-16 w-[min(calc(100%-2rem),92rem)] items-center justify-between gap-4 max-[560px]:w-[min(calc(100%-1rem),92rem)]",
+  topbarInner: "mx-auto flex min-h-16 w-[min(calc(100%-2rem),92rem)] items-center justify-between gap-4 max-[560px]:w-[min(calc(100%-1rem),92rem)] max-[560px]:flex-wrap",
   brand: "min-h-0 font-mono font-semibold no-underline [&>span]:text-signal",
   nav: "flex gap-4 max-[560px]:gap-2.5 [&>a]:min-h-0",
   eyebrow: "m-0 mb-3 font-mono text-xs uppercase tracking-wider text-cyan",
-  title: "m-0 max-w-[15ch] text-[clamp(2.7rem,7vw,6.8rem)] leading-tight tracking-[-.055em]",
+  title: "m-0 max-w-[15ch] break-words text-[clamp(2.7rem,7vw,6.8rem)] leading-tight tracking-[-.055em]",
   commitTitle: "m-0 max-w-[38ch] break-words text-[clamp(1.65rem,3.4vw,2.75rem)] font-semibold leading-[1.15] tracking-[-.025em]",
   commitBody: "m-0 mt-4 max-w-[70ch] whitespace-pre-wrap break-words text-base leading-7 text-muted",
   sectionTitle: "m-0 text-[clamp(1.5rem,3vw,2.6rem)] leading-tight tracking-[-.035em]",

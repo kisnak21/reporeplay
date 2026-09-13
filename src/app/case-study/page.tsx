@@ -1,5 +1,10 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { ui } from "@/lib/ui";
+
+export const metadata: Metadata = {
+  title: "Engineering case study",
+};
 
 export default function CaseStudyPage() {
   return <><header className={ui.topbar}><div className={ui.topbarInner}><Link className={ui.brand} href="/"><span aria-hidden="true">&gt;_</span> reporeplay</Link><Link href="/repositories/demo">Open showcase</Link></div></header><main className={`${ui.shell} max-w-5xl`} id="main-content"><p className={ui.eyebrow}>Engineering case study</p><h1 className={ui.title}>Evidence before interpretation.</h1><p className={ui.lede}>RepoReplay narrows its first release to public Next.js repositories so route and declared-dependency transitions can remain deterministic, complete, and traceable.</p><Study title="Why first-parent history">First-parent traversal produces a coherent mainline. Merge commits are compared with their first parent, which keeps transition semantics explicit without pretending to model the full Git graph.</Study><Study title="Why durable processing">Import work runs outside HTTP requests. PostgreSQL leases, checkpoints, retries, and staged activation keep the last successful snapshot readable when a worker stops or a refresh fails.</Study><Study title="Why fixture-first UI">The frontend consumes typed API-shaped fixtures. Backend implementation can replace the fixture service one endpoint at a time without moving state logic into presentation components.</Study></main></>;

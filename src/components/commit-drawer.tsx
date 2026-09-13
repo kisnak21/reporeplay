@@ -41,10 +41,11 @@ export function CommitDrawer({ closeHref, headingId = "commit-title", children }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       const active = document.activeElement as HTMLElement | null;
-      if (event.shiftKey && (active === first || !panelRef.current.contains(active))) {
+      const activeIsFocusable = active !== null && focusable.includes(active);
+      if (event.shiftKey && (active === first || !panelRef.current.contains(active) || !activeIsFocusable)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && active === last) {
+      } else if (!event.shiftKey && (active === last || !panelRef.current.contains(active) || !activeIsFocusable)) {
         event.preventDefault();
         first.focus();
       }

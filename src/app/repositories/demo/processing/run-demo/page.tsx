@@ -1,7 +1,12 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { ProcessingView } from "@/components/processing-view";
 import { processingFixture } from "@/features/fixtures/repository-fixtures";
 import { ui } from "@/lib/ui";
+
+export const metadata: Metadata = {
+  title: "Processing run — acme/ledger",
+};
 
 export default function ProcessingPage() {
   return <><Header /><main className={ui.shell} id="main-content"><ProcessingView run={processingFixture} /></main></>;

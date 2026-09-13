@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RepoReplay",
+  title: {
+    default: "RepoReplay — Repository evolution",
+    template: "%s | RepoReplay",
+  },
   description: "Trace Next.js repository evolution to source evidence.",
 };
 

@@ -1,8 +1,14 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { CommitDrawer } from "@/components/commit-drawer";
 import { LiveCommitView } from "@/components/live-commit-view";
 import { ui } from "@/lib/ui";
 import { readTimelineFilters, serializeTimelineFilters } from "@/lib/timeline-filters";
+
+export async function generateMetadata({ params }: { params: Promise<{ repositoryId: string; sha: string }> }): Promise<Metadata> {
+  const { repositoryId, sha } = await params;
+  return { title: `Commit evidence ${sha.slice(0, 7)} — ${repositoryId}` };
+}
 
 export default async function CommitPage({ params, searchParams }: { params: Promise<{ repositoryId: string; sha: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { repositoryId, sha } = await params;

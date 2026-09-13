@@ -1,76 +1,57 @@
-# Accessibility audit baseline
+# Accessibility audit — RepoReplay
 
-Date: 2026-09-03
-Target: local RepoReplay product at `http://localhost:3000`
-Goal: WCAG 2.2 Level AA, using a WCAG-EM-style scope, sample, evaluation, and findings ledger.
+WCAG 2.2 Level AA · WCAG-EM method · 5 pages/states sampled · 2026-09-13
 
-## Scope and limitations
+## Scope
 
-The audit covered the public import flow, repository overview, processing states, timeline, commit evidence drawer, and the case-study page. The target technology is the Next.js 16 / React 19 application in this repository, including client polling, retry/cancel controls, route-addressable drawers, and API-backed live states.
+- Target: local RepoReplay web application, including import, repository history, processing, commit evidence, and the case study.
+- Technology: Next.js 16.3.3, React 19, Tailwind CSS 4; Chromium 151.
+- Accessibility baseline for a human pass: keyboard-only; NVDA with Chrome or Firefox; VoiceOver with Safari; mobile screen reader; native 200%/400% browser zoom; forced-colors/high-contrast mode.
+- Automated evaluation used Playwright with the locally installed axe-core 4.13.0. The AccessLint CLI, configuration, and browser connection were unavailable, so this is an axe fallback and not an AccessLint scan.
+- No screen reader, touch device, or native browser zoom was available. Browser font-size overrides and simulated text-spacing CSS are evidence leads only.
 
-The automated accessibility tier used Playwright with axe-core because the repository environment did not expose a working Chrome DevTools/accesslint session. The `@accesslint/cli` scan was attempted twice, including with the locally installed Playwright Chromium binary, but Chrome debug discovery on `127.0.0.1:9222` did not complete. The axe-core results below are therefore a fallback automated baseline, not an accesslint result.
+## Sample
 
-Native browser zoom, screen readers, touch hardware, and cross-browser rendering were not available in this run. The zoom result is a CSS `zoom: 2` approximation and must not be treated as proof of native 200% or 400% conformance. Human verification remains required for screen-reader announcements, focus order, contrast in every state, and mobile interaction.
-
-## Sampled routes and states
-
-The sample contains the landing page, deterministic showcase pages, live API-backed pages with mocked repository/timeline/commit data, a failed processing run, and the case study:
-
-| Route | State exercised |
-| --- | --- |
-| `/` | import form and limits |
-| `/repositories/demo` | completed showcase repository and coverage warning |
-| `/repositories/demo/processing/run-demo` | processing showcase |
-| `/repositories/demo/commits/9d8e7f6` | showcase commit drawer with evidence tables |
-| `/repositories/audit-repo` | live repository overview, timeline, filters |
-| `/repositories/audit-repo/processing/audit-run` | live `FAILED` run with retry action |
-| `/repositories/audit-repo/commits/abc1234` | live commit drawer |
-| `/case-study` | product explanation page |
+- Structured: / — public import form and mocked invalid-URL error.
+- Structured: /repositories/demo — repository overview, timeline filters, no-results state, and long warning path.
+- Structured: /repositories/audit-repo/processing/audit-run — mocked failed refresh and retry state.
+- Structured: /repositories/demo/commits/9d8e7f6 — route-addressable commit evidence drawer, including keyboard-scrollable tables.
+- Random: /case-study — content page with a separate layout and long heading.
 
 ## Evaluation evidence
 
-- axe-core WCAG 2.0 A/AA, WCAG 2.1 AA, and WCAG 2.2 AA rules: **0 violations on all 8 sampled routes**.
-- DOM checks: every sample had `lang="en"`, exactly one `main`, exactly one `h1`, no visible unnamed links/buttons/inputs/selects/summary controls, and no visible anchor without `href`.
-- Keyboard proxy checks: visible tabbable controls exposed a computed `3px solid` focus outline. Existing end-to-end coverage exercises skip navigation, drawer focus entry, focus trapping, Escape close, browser Back close, retry, cancel, and validation-error presentation.
-- Desktop overflow: no document overflow at the default 1280px viewport.
-- 320px reflow: 7 of 8 samples had no document overflow. `/repositories/demo` overflowed to 354px because a warning path rendered in an inline `<code>` element was not allowed to wrap.
-- The showcase commit evidence tables remain horizontally scrollable at 320px. This keeps the data available but requires a horizontal gesture and should be reviewed against the table/data exception and the intended mobile evidence experience.
-- Text-spacing override produced overflow on `/repositories/demo` (426px) and `/case-study` (357px). CSS zoom approximation also overflowed on several samples; both results require native-browser confirmation before a formal conformance claim.
-- Small-target proxy checks found inline timeline links around 16-19px high. These are inline text links and may fall under the WCAG inline-target exception, but their touch comfort should still be reviewed.
+- axe-core reported zero violations on each of the five sampled routes at 1280px and 320px. The mocked failed-processing state also had zero violations at both widths after the semantic list change.
+- axe-core marked nine color-contrast nodes incomplete on the 320px commit-evidence page. Those values still need visual review; incomplete is not a pass.
+- Keyboard/E2E checks cover skip navigation, form validation, filters, empty results, the retry action, drawer focus entry and wrapping, Escape, and return to the triggering timeline link.
+- Page-level horizontal overflow is absent at 320px across the sample. The commit evidence tables remain horizontally scrollable inside named, focusable regions; Arrow keys move the table at mobile width.
+- The WCAG text-spacing override produces no document overflow on the five static sample routes at 320px.
+- A 200% root-font-size override produces no document overflow on the sample at 320px. This is not a substitute for native text resizing or browser zoom.
+- The import URL input border measures 3.98:1 against its fill after the shared border token was raised. Other non-text states, especially evidence-table borders, remain in the contrast handoff.
+- Processing steps now expose an ordered list; retry and filter-result changes retain programmatic status semantics. Their real announcements still need assistive-technology confirmation.
+- No animation or moving content was found in the sampled routes or global styles. Reduced-motion behavior was therefore not applicable to these states.
+- Next.js development controls can overlap local development screenshots; final mobile inspection should use a production build.
 
 ## Conformance ledger
 
-This ledger records the evidence from this run. "Pass" is limited to the exercised implementation or deterministic DOM check; it is not a whole-product certification.
+For the 35 criteria recorded in this sampled evaluation: **Pass: 19 · Fail: 0 · Undetermined: 7 · N/A: 9**. This is not a product-wide conformance claim; every other WCAG 2.2 A/AA criterion remains undetermined because it was not exercised.
 
-| WCAG 2.2 criterion | Status | Evidence / next action |
-| --- | --- | --- |
-| 1.3.1 Info and Relationships | Pass (automated/sample) | axe-core passed; landmarks, headings, labels, tables, and definition-list structure were present in sampled states. |
-| 1.4.10 Reflow | Fail (verified at 320px) | `/repositories/demo` warning path reaches 354px from a 320px viewport. Remediate wrapping or responsive presentation. The evidence table scroll is tracked separately as a data-layout review. |
-| 1.4.12 Text Spacing | Flagged | Text-spacing override overflowed the demo repository and case-study samples. Verify with the WCAG spacing bookmarklet/native browser and fix any content loss. |
-| 2.1.1 Keyboard | Pass (exercised flows) | E2E covers skip link, drawer controls, retry/cancel, Escape, and Back. Complete a full keyboard traversal of every sampled page manually. |
-| 2.1.2 No Keyboard Trap | Pass (drawer sample) | Commit drawer focus trap and Escape behavior are covered by E2E. Recheck all error/loading states manually. |
-| 2.4.1 Bypass Blocks | Pass (sample) | Skip-to-content link is present and keyboard-tested. |
-| 2.4.3 Focus Order | Undetermined / human required | DOM proxy did not establish a meaningful reading order for every responsive state. Traverse the full flow with keyboard and assistive technology. |
-| 2.4.6 Headings and Labels | Pass (automated/sample) | axe-core and DOM checks passed; sampled pages exposed one primary heading and labelled form/filter regions. |
-| 2.4.7 Focus Visible | Pass (sample) | Computed focus proxy found visible outlines on sampled tabbables. Verify contrast and appearance across panel, alert, and drawer backgrounds. |
-| 2.5.3 Label in Name | Pass (automated/sample) | axe-core passed and visible control names were present in the sample. |
-| 2.5.8 Target Size (Minimum) | Flagged | Inline timeline links were below 24px in height. Review the inline-link exception and increase non-inline targets where practical. |
-| 3.1.1 Language of Page | Pass (sample) | All sampled documents declared `lang="en"`. |
-| 4.1.2 Name, Role, Value | Pass (automated/sample) | axe-core passed; buttons, form controls, dialog, status, and alert roles were exposed in the sample. |
-| 4.1.3 Status Messages | Undetermined / human required | `role="status"`, `aria-live`, and `role="alert"` are present for loading, retry, and failure states. Confirm announcement timing and wording with NVDA/VoiceOver. |
-| 1.4.1 Use of Color, 1.4.11 Non-text Contrast | Undetermined / human required | Automated sample did not prove all status, focus, border, and warning contrasts or color-independent meaning. |
-| 1.4.4 Resize Text | Undetermined / human required | Native 200%/400% zoom was unavailable; CSS zoom output is only a lead. |
+- Pass: 1.3.1, 1.3.2, 1.4.1, 1.4.10, 1.4.12, 2.1.1, 2.1.2, 2.4.1, 2.4.2, 2.4.3, 2.4.4, 2.4.6, 2.4.7, 2.5.3, 2.5.8, 3.1.1, 3.3.1, 3.3.2, 4.1.2.
+- Fail: none remains in the exercised sample after remediation.
+- Undetermined: 1.4.3, 1.4.4, 1.4.11, 2.4.11, 3.2.3, 3.2.4, 4.1.3.
+- N/A for the sample: 1.2.1–1.2.5 (no media), 2.5.1, 2.5.4, 2.5.7 (no path gestures, motion actuation, or dragging).
 
-Media, audio/video timing, drag interactions, and autoplay criteria were not applicable to the sampled product states.
+## Remediation verified
 
-## Prioritized worklist
+- Added descriptive document titles to the import, case-study, repository, processing, and commit pages.
+- Kept keyboard focus inside the modal drawer, returned focus to the timeline link after close, and preserved focus when retry changes into cancel.
+- Exposed empty-filter results as a polite status and processing steps as an ordered list.
+- Raised the shared control-border contrast and wrapped long headings, identifiers, and repository details at narrow widths.
+- Added E2E regression checks for focus behavior, page titles, text spacing, 200% text-size reflow, and form-control contrast.
 
-1. Fix the verified 320px warning-path overflow in `src/app/repositories/demo/page.tsx`; apply the same safe wrapping treatment to API-backed warning paths in `src/components/live-repository-view.tsx` and `src/components/live-commit-view.tsx`.
-2. Review the commit evidence table at narrow widths. Preserve access to every value while making the scroll affordance and column semantics clear, or switch to a stacked mobile evidence layout.
-3. Re-run automated checks in CI and add a supported accesslint/axe command with stable source mapping.
-4. Perform the human pass with keyboard-only, NVDA + Chromium/Firefox, VoiceOver + Safari, and a mobile screen reader. Include native 200%/400% zoom, reduced motion, text spacing, and 320px reflow.
-5. After the a11y baseline is remediated, continue with the processing failure/error-state UX and production observability work tracked in `TASKS.md`.
+## Human-required handoff
 
-## Audit disposition
-
-The sampled implementation has a clean automated axe baseline and several verified keyboard foundations, but it is **not yet a complete WCAG 2.2 AA conformance claim**. The verified narrow-screen overflow and the outstanding human checks must be resolved before production-readiness sign-off.
+- Confirm status and alert announcements on the import error, filtered empty state, failed processing run, retry transition, and commit drawer with NVDA + Chrome/Firefox and VoiceOver + Safari.
+- Inspect focus and reading order, dialog/table announcements, and the keyboard-scrollable evidence tables with those screen readers.
+- Test native 200%/400% zoom, text-only resizing, forced colors, and orientation changes.
+- Review contrast for evidence-table text, focus rings, status indicators, borders, and warnings in production-rendered states.
+- Wire a supported AccessLint or axe command into CI with stable source mapping; the local AccessLint scan was not available in this audit.

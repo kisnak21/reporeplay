@@ -1,9 +1,15 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getFixtureCommit } from "@/features/fixtures/repository-fixtures";
 import { CommitDrawer } from "@/components/commit-drawer";
 import { splitCommitMessage } from "@/lib/commit-message";
 import { ui } from "@/lib/ui";
+
+export async function generateMetadata({ params }: { params: Promise<{ sha: string }> }): Promise<Metadata> {
+  const { sha } = await params;
+  return { title: `Commit evidence — ${sha.slice(0, 7)}` };
+}
 
 export default async function CommitPage({ params }: { params: Promise<{ sha: string }> }) {
   const { sha } = await params; const commit = await getFixtureCommit(sha); if (!commit) notFound();
@@ -11,5 +17,5 @@ export default async function CommitPage({ params }: { params: Promise<{ sha: st
   return <><header className={ui.topbar} inert><div className={ui.topbarInner}><Link className={ui.brand} href="/"><span aria-hidden="true">&gt;_</span> reporeplay</Link><Link href="/repositories/demo">Back to timeline</Link></div></header><CommitDrawer closeHref="/repositories/demo"><header className="flex items-start justify-between gap-4 border-b border-line pb-4 max-[560px]:flex-col max-[560px]:items-stretch"><div><p className={ui.eyebrow}>commit / {commit.shortSha}</p><h1 className={ui.commitTitle} id="commit-title" tabIndex={-1}>{subject}</h1>{body ? <p className={ui.commitBody}>{body}</p> : null}</div><Link className={ui.button} href="/repositories/demo">Close evidence</Link></header><Evidence title="Commit record"><dl className="m-0"><Record label="Author" value={commit.authorName} /><Record label="Committed" value={new Date(commit.committedAt).toLocaleString("en-GB")} /><Record label="First parent" value={commit.firstParentSha} /><Record label="Category" value={`${commit.category} / ${commit.categorySource}`} /></dl></Evidence><Evidence title="Route evidence"><DataTable headers={["Change", "Route", "Source"]} rows={commit.routeChanges.map((change) => [change.type, change.route, change.sourcePath])} /></Evidence><Evidence title="Dependency evidence"><DataTable headers={["Change", "Package", "Declaration", "Manifest"]} rows={commit.dependencyChanges.map((change) => [change.type, change.packageName, `${change.previousValue ?? "none"} to ${change.currentValue ?? "none"}`, change.manifestPath])} /></Evidence><Evidence title="Changed files"><DataTable headers={["Status", "Path", "Diff"]} rows={commit.files.map((file) => [file.status, file.path, `+${file.additions} -${file.deletions}`])} /></Evidence><a className={ui.primaryButton} href={commit.externalUrl}>Open commit on GitHub</a></CommitDrawer></>;
 }
 function Evidence({ title, children }: { title: string; children: React.ReactNode }) { return <section className="border-b border-line py-5"><h2 className="mb-3 font-mono text-xs uppercase tracking-wider text-cyan">{title}</h2>{children}</section>; }
-function Record({ label, value }: { label: string; value: string }) { return <div className="grid grid-cols-[9rem_1fr] border-t border-soft p-2 max-[560px]:grid-cols-1"><dt className="text-muted">{label}</dt><dd className="m-0"><code>{value}</code></dd></div>; }
+function Record({ label, value }: { label: string; value: string }) { return <div className="grid grid-cols-[9rem_1fr] border-t border-soft p-2 max-[560px]:grid-cols-1"><dt className="text-muted">{label}</dt><dd className="m-0 min-w-0"><code className="break-all">{value}</code></dd></div>; }
 function DataTable({ headers, rows }: { headers: string[]; rows: string[][] }) { return <div aria-label={`${headers.join(", ")} evidence table`} className="overflow-x-auto" role="region" tabIndex={0}><table className="w-full border-collapse text-xs"><thead><tr>{headers.map((header) => <th className="border-t border-soft p-2 text-left align-top text-muted" key={header}>{header}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row, index) => <tr key={index}>{row.map((cell) => <td className="border-t border-soft p-2 text-left align-top" key={cell}><code>{cell}</code></td>)}</tr>) : <tr><td colSpan={headers.length}>No transitions recorded.</td></tr>}</tbody></table></div>; }

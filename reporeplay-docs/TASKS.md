@@ -243,14 +243,15 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 
 ## Epic 17: End-to-End and Accessibility Verification
 
-- [ ] E2E import a single-root fixture.
-- [ ] E2E configure an ambiguous monorepo fixture.
-- [ ] E2E observe interruption and recovery.
-- [ ] E2E trace route and dependency events to commit evidence.
-- [ ] E2E refresh successfully and fail a refresh while retaining old data.
-- [ ] Run automated accessibility checks on import, processing, overview, timeline, and commit views.
-- [ ] Manually verify keyboard order, focus, drawer semantics, status announcements, reduced motion, 200% zoom, and 320 CSS-pixel reflow.
-- [ ] Run responsive checks for long untrusted content.
+- [x] E2E import the single-root fixture.
+- [x] E2E choose an application root from an ambiguous-run response.
+- [ ] E2E interrupt the worker and recover the same durable run.
+- [ ] E2E trace real route and dependency events from import through commit evidence.
+- [ ] E2E complete a refresh and fail a refresh while retaining the previous snapshot.
+- [x] Run axe-core checks on import, processing, overview, timeline, and commit views at desktop and 320px widths; record the contrast items left for human review in `ACCESSIBILITY_AUDIT.md`.
+- [x] Add E2E checks for skip navigation, validation, filters, empty-result announcements, retry focus, drawer focus and return, page titles, 320px reflow, text-spacing overrides, 200% text-size proxy, and long content.
+- [ ] Manually verify screen-reader output, complete reading and keyboard order, native 200%/400% zoom, forced colors, and contrast items listed in `ACCESSIBILITY_AUDIT.md`.
+- [ ] Add a repeatable axe/AccessLint command to CI.
 
 **Acceptance:** The complete supported flow passes the documented quality gate with recorded evidence.
 
