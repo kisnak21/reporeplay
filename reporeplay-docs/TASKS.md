@@ -165,7 +165,7 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 - [x] Implement keyword, category, path, date, and event filters.
 - [x] Implement commit evidence endpoint scoped to the active run.
 - [x] Return relevant run and commit warnings.
-- [ ] Add query indexes based on measured plans.
+- [x] Measure query plans and add only justified indexes.
 - [x] Add API contract and authorization tests.
 
 **Acceptance:** Every response conforms to `API_SPEC.md`, and staged data is unreachable through public reads.

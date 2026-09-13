@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider        = "prisma-client"
+  output          = "../generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [pg_trgm]
 }
 
 enum RepositoryAvailability {
@@ -255,6 +257,7 @@ model CommitFile {
   @@unique([runCommitId, path, status])
   @@index([runCommitId])
   @@index([runId, path])
+  @@index([path(ops: raw("gin_trgm_ops")), previousPath(ops: raw("gin_trgm_ops"))], type: Gin, map: "CommitFile_path_previousPath_trgm_idx")
 }
 
 model CommitCategory {
