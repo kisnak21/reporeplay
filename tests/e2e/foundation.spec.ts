@@ -232,6 +232,81 @@ test("filters timeline and opens commit evidence", async ({ page }) => {
   await expect(commitLink).toBeFocused();
 });
 
+test("traces route and dependency evidence from timeline to commit detail", async ({ page }) => {
+  const timelineItem = timelineItemPayload("trace111", "feat: add account and upgrade router");
+  timelineItem.eventSummary = {
+    routesAdded: 1,
+    routesRemoved: 1,
+    dependenciesAdded: 0,
+    dependenciesRemoved: 0,
+    dependenciesUpdated: 1,
+  };
+
+  const detail = commitDetailPayload();
+  detail.data.snapshot.runId = "run-trace-repo";
+  detail.data.sha = "trace111full-sha";
+  detail.data.shortSha = "trace111";
+  detail.data.message = "feat: add account and upgrade router";
+  detail.data.routeChanges = [
+    {
+      router: "APP",
+      route: "/account",
+      sourcePath: "apps/web/src/app/account/page.tsx",
+      routeType: "PAGE",
+      changeType: "ADDED",
+    },
+    {
+      router: "PAGES",
+      route: "/profile",
+      sourcePath: "apps/web/pages/profile.tsx",
+      routeType: "PAGE",
+      changeType: "REMOVED",
+    },
+  ];
+  detail.data.dependencyChanges = [
+    {
+      manifestPath: "apps/web/package.json",
+      packageName: "next",
+      dependencyGroup: "dependencies",
+      changeType: "UPDATED",
+      previousValue: "15.4.0",
+      currentValue: "15.5.0",
+    },
+  ];
+
+  await page.route("**/api/repositories/trace-repo**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith("/commits/trace111")) {
+      await route.fulfill({ json: detail });
+      return;
+    }
+    if (pathname.endsWith("/commits")) {
+      await route.fulfill({
+        json: timelinePagePayload("run-trace-repo", [timelineItem], null),
+      });
+      return;
+    }
+    await route.fulfill({ json: timelineRepositoryPayload("trace-repo") });
+  });
+
+  await page.goto("/repositories/trace-repo");
+  const commitLink = page.getByRole("link", {
+    name: "feat: add account and upgrade router",
+  });
+  const commitRow = page.locator("article").filter({ has: commitLink });
+  await expect(commitRow).toContainText("+ route changes");
+  await expect(commitRow).toContainText("- route changes");
+  await expect(commitRow).toContainText("~ dependency updates");
+
+  await commitLink.click();
+  await expect(page.getByRole("heading", { name: "Route evidence" })).toBeVisible();
+  await expect(page.getByText("ADDED /account", { exact: true })).toBeVisible();
+  await expect(page.getByText("apps/web/src/app/account/page.tsx")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dependency evidence" })).toBeVisible();
+  await expect(page.getByText("UPDATED next", { exact: true })).toBeVisible();
+  await expect(page.getByText(/15\.4\.0 to 15\.5\.0/)).toBeVisible();
+});
+
 test("supports keyboard skip navigation", async ({ page }) => {
   await page.goto("/");
   await page.keyboard.press("Tab");
@@ -388,6 +463,100 @@ test("starts a manual refresh from the active repository", async ({ page }) => {
   await expect(page.getByRole("link", { name: "feat: keep active evidence" })).toBeVisible();
   await page.getByRole("button", { name: "Refresh from GitHub" }).click();
   await expect(page).toHaveURL(/repositories\/refresh-repo\/processing\/refresh-run/);
+  expect(refreshRequests).toBe(1);
+});
+
+test("shows the new active snapshot after a successful refresh", async ({ page }) => {
+  let refreshStarted = false;
+  let refreshRequests = 0;
+
+  await page.route("**/api/repositories/successful-refresh-repo**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+
+    if (request.method() === "POST" && url.pathname.endsWith("/refresh")) {
+      refreshStarted = true;
+      refreshRequests += 1;
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            repositoryId: "successful-refresh-repo",
+            run: { id: "successful-refresh-run", status: "QUEUED" },
+          },
+        }),
+      });
+      return;
+    }
+
+    if (url.pathname.endsWith("/runs/successful-refresh-run")) {
+      await route.fulfill({
+        json: {
+          data: {
+            id: "successful-refresh-run",
+            kind: "REFRESH",
+            status: "SUCCEEDED",
+            step: "COMPLETE",
+            fetchedCommits: 4,
+            processedCommits: 4,
+            expectedCommits: 4,
+            worker: {
+              status: "HEALTHY",
+              lastHeartbeatAt: "2026-09-13T00:00:00Z",
+              heartbeatAgeSeconds: 2,
+            },
+            attemptCount: 1,
+            nextAttemptAt: null,
+            appRootCandidates: [],
+            warnings: [],
+            error: null,
+          },
+        },
+      });
+      return;
+    }
+
+    if (url.pathname.endsWith("/commits")) {
+      const item = refreshStarted
+        ? timelineItemPayload("new2222", "feat: refreshed route evidence")
+        : timelineItemPayload("old1111", "fix: original snapshot");
+      const runId = refreshStarted
+        ? "successful-refresh-run"
+        : "run-successful-refresh-repo";
+      await route.fulfill({ json: timelinePagePayload(runId, [item], null) });
+      return;
+    }
+
+    const repository = timelineRepositoryPayload(
+      "successful-refresh-repo",
+      refreshStarted
+        ? { id: "successful-refresh-run", kind: "REFRESH", status: "SUCCEEDED", error: null }
+        : null,
+    );
+    repository.data.activeSnapshot.runId = refreshStarted
+      ? "successful-refresh-run"
+      : "run-successful-refresh-repo";
+    repository.data.activeSnapshot.headSha = refreshStarted
+      ? "newhead123"
+      : "oldhead123";
+    await route.fulfill({ json: repository });
+  });
+
+  await page.goto("/repositories/successful-refresh-repo");
+  await expect(page.getByText("oldhead123", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "fix: original snapshot" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Refresh from GitHub" }).click();
+  await expect(page).toHaveURL(/processing\/successful-refresh-run/);
+  await expect(page.getByRole("status")).toContainText("Snapshot activated");
+  await page.getByRole("link", { name: "View repository" }).click();
+
+  await expect(page.getByText("newhead123", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "feat: refreshed route evidence" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "fix: original snapshot" })).toBeHidden();
   expect(refreshRequests).toBe(1);
 });
 

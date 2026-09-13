@@ -245,9 +245,10 @@ Tracking note (2026-09-05): checked tasks below reflect implementation evidence 
 
 - [x] E2E import the single-root fixture.
 - [x] E2E choose an application root from an ambiguous-run response.
-- [ ] E2E interrupt the worker and recover the same durable run.
-- [ ] E2E trace real route and dependency events from import through commit evidence.
-- [ ] E2E complete a refresh and fail a refresh while retaining the previous snapshot.
+- [ ] E2E interrupt a real worker and recover the same durable run.
+- [x] E2E render route and dependency changes from timeline summary through commit evidence using API fixtures.
+- [ ] E2E trace fixture-imported route and dependency events through the worker and database into commit evidence.
+- [x] E2E show a successful refresh activating a new snapshot and a failed refresh retaining the previous one using API fixtures.
 - [x] Run axe-core checks on import, processing, overview, timeline, and commit views at desktop and 320px widths; record the contrast items left for human review in `ACCESSIBILITY_AUDIT.md`.
 - [x] Add E2E checks for skip navigation, validation, filters, empty-result announcements, retry focus, drawer focus and return, page titles, 320px reflow, text-spacing overrides, 200% text-size proxy, and long content.
 - [ ] Manually verify screen-reader output, complete reading and keyboard order, native 200%/400% zoom, forced colors, and contrast items listed in `ACCESSIBILITY_AUDIT.md`.
